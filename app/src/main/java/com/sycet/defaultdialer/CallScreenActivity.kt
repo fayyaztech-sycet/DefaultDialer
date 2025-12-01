@@ -3,10 +3,11 @@ package com.sycet.defaultdialer
 import android.Manifest
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
 import android.provider.ContactsContract
 import android.telecom.Call
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -58,8 +60,27 @@ class CallScreenActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Set up window flags to show over lock screen and turn screen on
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+        }
+        
         val phoneNumber = intent.getStringExtra("PHONE_NUMBER") ?: "Unknown"
         val callState = intent.getStringExtra("CALL_STATE") ?: "Unknown"
+        
+        // Get the current call from CallScreeningService
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            currentCall = CallScreeningService.currentCall
+        }
         
         setContent {
             DefaultDialerTheme {
@@ -70,6 +91,9 @@ class CallScreenActivity : ComponentActivity() {
                     CallScreen(
                         phoneNumber = phoneNumber,
                         initialCallState = callState,
+                        call = currentCall,
+                        onAnswerCall = { answerCall() },
+                        onRejectCall = { rejectCall() },
                         onEndCall = { endCall() },
                         onToggleMute = { toggleMute() },
                         onToggleSpeaker = { toggleSpeaker() },
@@ -78,11 +102,19 @@ class CallScreenActivity : ComponentActivity() {
                 }
             }
         }
-        
-        // Get the current call from CallScreeningService
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            currentCall = CallScreeningService.currentCall
+    }
+    
+    private fun answerCall() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            currentCall?.answer(0)
         }
+    }
+    
+    private fun rejectCall() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            currentCall?.reject(false, null)
+        }
+        finish()
     }
     
     private fun endCall() {
@@ -140,6 +172,9 @@ class CallScreenActivity : ComponentActivity() {
 fun CallScreen(
     phoneNumber: String,
     initialCallState: String,
+    call: Call?,
+    onAnswerCall: () -> Unit,
+    onRejectCall: () -> Unit,
     onEndCall: () -> Unit,
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
@@ -150,9 +185,45 @@ fun CallScreen(
     var isActive by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(false) }
     var isSpeakerOn by remember { mutableStateOf(false) }
+    var isRinging by remember { mutableStateOf(initialCallState.contains("Incoming", ignoreCase = true)) }
     
     val contactName = remember(phoneNumber) { getContactName(phoneNumber) }
     val displayName = contactName ?: phoneNumber
+    
+    // Monitor call state from the Call object
+    DisposableEffect(call) {
+        val callback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            object : Call.Callback() {
+                override fun onStateChanged(call: Call?, state: Int) {
+                    when (state) {
+                        Call.STATE_ACTIVE -> {
+                            callState = "Active"
+                            isActive = true
+                            isRinging = false
+                        }
+                        Call.STATE_DISCONNECTED -> {
+                            // Call disconnected by remote party
+                            onEndCall()
+                        }
+                        Call.STATE_RINGING -> {
+                            isRinging = true
+                            isActive = false
+                        }
+                    }
+                }
+            }
+        } else null
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && callback != null) {
+            call?.registerCallback(callback)
+        }
+        
+        onDispose {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && callback != null) {
+                call?.unregisterCallback(callback)
+            }
+        }
+    }
     
     // Timer effect for call duration
     LaunchedEffect(isActive) {
@@ -160,14 +231,6 @@ fun CallScreen(
             delay(1000)
             elapsedTime += 1
         }
-    }
-    
-    // Monitor call state changes
-    LaunchedEffect(Unit) {
-        // Simulate state change - in real implementation, listen to Call.Callback
-        delay(2000)
-        callState = "Active"
-        isActive = true
     }
     
     Box(
@@ -242,89 +305,142 @@ fun CallScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(bottom = 32.dp)
             ) {
-                // Control buttons row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Mute button
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        IconButton(
-                            onClick = {
-                                isMuted = !isMuted
-                                onToggleMute()
-                            },
-                            modifier = Modifier
-                                .size(64.dp)
-                                .background(
-                                    color = if (isMuted) MaterialTheme.colorScheme.primary 
-                                           else MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = CircleShape
+                // Show answer/reject buttons for incoming calls
+                if (isRinging) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Reject button
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            FloatingActionButton(
+                                onClick = onRejectCall,
+                                modifier = Modifier.size(72.dp),
+                                containerColor = Color(0xFFE53935)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CallEnd,
+                                    contentDescription = "Reject",
+                                    modifier = Modifier.size(32.dp),
+                                    tint = Color.White
                                 )
-                        ) {
-                            Icon(
-                                imageVector = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic,
-                                contentDescription = "Mute",
-                                tint = if (isMuted) Color.White 
-                                      else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(28.dp)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Reject",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = if (isMuted) "Unmute" else "Mute",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        
+                        // Answer button
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            FloatingActionButton(
+                                onClick = onAnswerCall,
+                                modifier = Modifier.size(72.dp),
+                                containerColor = Color(0xFF4CAF50)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = "Answer",
+                                    modifier = Modifier.size(32.dp),
+                                    tint = Color.White
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Answer",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    // Control buttons for active call
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Mute button
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = {
+                                    isMuted = !isMuted
+                                    onToggleMute()
+                                },
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .background(
+                                        color = if (isMuted) MaterialTheme.colorScheme.primary 
+                                               else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                                    contentDescription = "Mute",
+                                    tint = if (isMuted) Color.White 
+                                          else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (isMuted) "Unmute" else "Mute",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        // Speaker button
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = {
+                                    isSpeakerOn = !isSpeakerOn
+                                    onToggleSpeaker()
+                                },
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .background(
+                                        color = if (isSpeakerOn) MaterialTheme.colorScheme.primary 
+                                               else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VolumeUp,
+                                    contentDescription = "Speaker",
+                                    tint = if (isSpeakerOn) Color.White 
+                                          else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Speaker",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     
-                    // Speaker button
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        IconButton(
-                            onClick = {
-                                isSpeakerOn = !isSpeakerOn
-                                onToggleSpeaker()
-                            },
-                            modifier = Modifier
-                                .size(64.dp)
-                                .background(
-                                    color = if (isSpeakerOn) MaterialTheme.colorScheme.primary 
-                                           else MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = CircleShape
-                                )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.VolumeUp,
-                                contentDescription = "Speaker",
-                                tint = if (isSpeakerOn) Color.White 
-                                      else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Speaker",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Spacer(modifier = Modifier.height(48.dp))
+                    
+                    // End call button
+                    FloatingActionButton(
+                        onClick = onEndCall,
+                        modifier = Modifier.size(72.dp),
+                        containerColor = Color(0xFFE53935)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = "End Call",
+                            modifier = Modifier.size(32.dp),
+                            tint = Color.White
                         )
                     }
-                }
-                
-                Spacer(modifier = Modifier.height(48.dp))
-                
-                // End call button
-                FloatingActionButton(
-                    onClick = onEndCall,
-                    modifier = Modifier.size(72.dp),
-                    containerColor = Color(0xFFE53935)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CallEnd,
-                        contentDescription = "End Call",
-                        modifier = Modifier.size(32.dp),
-                        tint = Color.White
-                    )
                 }
             }
         }

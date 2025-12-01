@@ -81,9 +81,16 @@ class CallScreeningService : InCallService() {
             putExtra("CALL_STATE", callState)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+            addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
         }
         
-        startActivity(intent)
+        try {
+            startActivity(intent)
+            Log.d(TAG, "Call screen launched for: $phoneNumber")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch call screen", e)
+        }
     }
     
     private fun updateCallScreen(call: Call?, callState: String) {
