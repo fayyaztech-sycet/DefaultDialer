@@ -11,6 +11,9 @@ class IncomingCallReceiver : BroadcastReceiver() {
     
     companion object {
         const val TAG = "IncomingCallReceiver"
+        private var lastCallTime = 0L
+        private var lastPhoneNumber = ""
+        private const val DEBOUNCE_DELAY = 2000L // 2 seconds
     }
     
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -28,17 +31,32 @@ class IncomingCallReceiver : BroadcastReceiver() {
                 
                 when (state) {
                     TelephonyManager.EXTRA_STATE_RINGING -> {
-                        // Incoming call ringing
-                        Log.d(TAG, "Incoming call from: $incomingNumber")
-                        launchCallScreen(context, incomingNumber ?: "Unknown", "Incoming call...")
+                        // Incoming call ringing - prevent duplicate launches
+                        val currentTime = System.currentTimeMillis()
+                        val phoneNumber = incomingNumber ?: "Unknown"
+                        
+                        // Check if this is a duplicate call within debounce period
+                        if (phoneNumber == lastPhoneNumber && 
+                            (currentTime - lastCallTime) < DEBOUNCE_DELAY) {
+                            Log.d(TAG, "Ignoring duplicate call notification")
+                            return
+                        }
+                        
+                        lastCallTime = currentTime
+                        lastPhoneNumber = phoneNumber
+                        
+                        Log.d(TAG, "Incoming call from: $phoneNumber")
+                        launchCallScreen(context, phoneNumber, "Incoming call...")
                     }
                     TelephonyManager.EXTRA_STATE_OFFHOOK -> {
                         // Call answered or outgoing call started
                         Log.d(TAG, "Call active")
                     }
                     TelephonyManager.EXTRA_STATE_IDLE -> {
-                        // Call ended or no call
+                        // Call ended or no call - reset tracking
                         Log.d(TAG, "Call idle")
+                        lastPhoneNumber = ""
+                        lastCallTime = 0L
                     }
                 }
             }
@@ -46,20 +64,24 @@ class IncomingCallReceiver : BroadcastReceiver() {
     }
     
     private fun launchCallScreen(context: Context, phoneNumber: String, callState: String) {
-        val intent = Intent(context, CallScreenActivity::class.java).apply {
-            putExtra("PHONE_NUMBER", phoneNumber)
-            putExtra("CALL_STATE", callState)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-            addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
-        }
-        
         try {
+            val intent = Intent(context, CallScreenActivity::class.java).apply {
+                putExtra("PHONE_NUMBER", phoneNumber)
+                putExtra("CALL_STATE", callState)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            
             context.startActivity(intent)
-            Log.d(TAG, "Call screen launched for incoming call")
+            Log.d(TAG, "Call screen launched successfully for: $phoneNumber")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Security exception launching call screen", e)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch call screen for incoming call", e)
+            Log.e(TAG, "Failed to launch call screen", e)
         }
     }
 }

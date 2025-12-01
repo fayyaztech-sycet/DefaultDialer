@@ -74,7 +74,19 @@ class CallScreeningService : InCallService() {
     }
     
     private fun launchCallScreen(call: Call?, callState: String) {
-        val phoneNumber = call?.details?.handle?.schemeSpecificPart ?: "Unknown"
+        // Try multiple methods to get phone number
+        var phoneNumber = call?.details?.handle?.schemeSpecificPart
+        
+        // Fallback: try getting from URI string
+        if (phoneNumber.isNullOrEmpty() || phoneNumber == "Unknown") {
+            phoneNumber = call?.details?.handle?.toString()?.substringAfter("tel:")?.substringBefore("@") ?: "Unknown"
+        }
+        
+        // Clean up the phone number (remove any spaces or special formatting)
+        phoneNumber = phoneNumber.replace(" ", "").replace("-", "")
+        
+        Log.d(TAG, "Launching call screen - Raw Handle: ${call?.details?.handle}")
+        Log.d(TAG, "Launching call screen - Extracted Number: $phoneNumber, State: $callState")
         
         val intent = Intent(this, CallScreenActivity::class.java).apply {
             putExtra("PHONE_NUMBER", phoneNumber)
@@ -83,6 +95,7 @@ class CallScreeningService : InCallService() {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
             addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+            addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
         }
         
         try {

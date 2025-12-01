@@ -1,12 +1,14 @@
 package com.sycet.defaultdialer
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
 import android.telecom.Call
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -56,9 +58,23 @@ import kotlinx.coroutines.delay
 class CallScreenActivity : ComponentActivity() {
     
     private var currentCall: Call? = null
+    private var isFinishing = false
+    private val phoneNumberState = mutableStateOf("Unknown")
+    private val callStateState = mutableStateOf("Unknown")
+    
+    companion object {
+        private var isActivityRunning = false
+    }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Prevent multiple instances
+        if (isActivityRunning) {
+            finish()
+            return
+        }
+        isActivityRunning = true
         
         // Set up window flags to show over lock screen and turn screen on
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -74,12 +90,26 @@ class CallScreenActivity : ComponentActivity() {
             )
         }
         
-        val phoneNumber = intent.getStringExtra("PHONE_NUMBER") ?: "Unknown"
-        val callState = intent.getStringExtra("CALL_STATE") ?: "Unknown"
+        phoneNumberState.value = intent.getStringExtra("PHONE_NUMBER") ?: "Unknown"
+        callStateState.value = intent.getStringExtra("CALL_STATE") ?: "Unknown"
+        
+        Log.d("CallScreenActivity", "Received Intent - Number: ${phoneNumberState.value}, State: ${callStateState.value}")
         
         // Get the current call from CallScreeningService
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             currentCall = CallScreeningService.currentCall
+            
+            // If still Unknown, try to get from current call
+            if (phoneNumberState.value == "Unknown" && currentCall != null) {
+                val number = currentCall?.details?.handle?.schemeSpecificPart
+                if (!number.isNullOrEmpty()) {
+                    phoneNumberState.value = number
+                    Log.d("CallScreenActivity", "Retrieved number from currentCall: $number")
+                }
+            }
+            
+            // Register callback to monitor call state
+            currentCall?.registerCallback(callCallback)
         }
         
         setContent {
@@ -89,8 +119,8 @@ class CallScreenActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     CallScreen(
-                        phoneNumber = phoneNumber,
-                        initialCallState = callState,
+                        phoneNumber = phoneNumberState.value,
+                        initialCallState = callStateState.value,
                         call = currentCall,
                         onAnswerCall = { answerCall() },
                         onRejectCall = { rejectCall() },
@@ -104,22 +134,58 @@ class CallScreenActivity : ComponentActivity() {
         }
     }
     
+    private val callCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        object : Call.Callback() {
+            override fun onStateChanged(call: Call?, state: Int) {
+                when (state) {
+                    Call.STATE_ACTIVE -> {
+                        callStateState.value = "Active"
+                    }
+                    Call.STATE_DISCONNECTED -> {
+                        val disconnectCause = call?.details?.disconnectCause
+                        Log.d("CallScreenActivity", "Call disconnected: ${disconnectCause?.reason}")
+                        endCall()
+                    }
+                }
+            }
+        }
+    } else null
+    
     private fun answerCall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            currentCall?.answer(0)
+            try {
+                currentCall?.answer(0)
+                callStateState.value = "Connecting..."
+            } catch (e: Exception) {
+                Log.e("CallScreenActivity", "Failed to answer call", e)
+            }
         }
     }
     
     private fun rejectCall() {
+        if (isFinishing) return
+        isFinishing = true
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            currentCall?.reject(false, null)
+            try {
+                currentCall?.reject(false, null)
+            } catch (e: Exception) {
+                Log.e("CallScreenActivity", "Failed to reject call", e)
+            }
         }
         finish()
     }
     
     private fun endCall() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            currentCall?.disconnect()
+        if (isFinishing) return
+        isFinishing = true
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                currentCall?.disconnect()
+            } catch (e: Exception) {
+                Log.e("CallScreenActivity", "Failed to disconnect call", e)
+            }
         }
         finish()
     }
@@ -166,6 +232,50 @@ class CallScreenActivity : ComponentActivity() {
         
         return contactName
     }
+    
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            callCallback?.let { currentCall?.unregisterCallback(it) }
+        }
+        isActivityRunning = false
+        isFinishing = false
+        super.onDestroy()
+    }
+    
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent) // Important: update the activity's intent
+        
+        // Handle new intent if activity is already running
+        val newPhoneNumber = intent.getStringExtra("PHONE_NUMBER") ?: "Unknown"
+        val newCallState = intent.getStringExtra("CALL_STATE") ?: "Unknown"
+        
+        Log.d("CallScreenActivity", "onNewIntent - Number: $newPhoneNumber, State: $newCallState")
+        
+        // Update states which will trigger recomposition
+        phoneNumberState.value = newPhoneNumber
+        callStateState.value = newCallState
+        
+        // Update the UI with new call information
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            callCallback?.let { currentCall?.unregisterCallback(it) }
+            currentCall = CallScreeningService.currentCall
+            
+            // Try to get number from call if still Unknown
+            if (phoneNumberState.value == "Unknown" && currentCall != null) {
+                val number = currentCall?.details?.handle?.schemeSpecificPart
+                if (!number.isNullOrEmpty()) {
+                    phoneNumberState.value = number
+                    Log.d("CallScreenActivity", "onNewIntent - Retrieved from call: $number")
+                }
+            }
+            
+            callCallback?.let { currentCall?.registerCallback(it) }
+        }
+        
+        // Reset finishing flag to allow new call handling
+        isFinishing = false
+    }
 }
 
 @Composable
@@ -182,13 +292,13 @@ fun CallScreen(
 ) {
     var callState by remember { mutableStateOf(initialCallState) }
     var elapsedTime by remember { mutableLongStateOf(0L) }
-    var isActive by remember { mutableStateOf(false) }
+    var isActive by remember { mutableStateOf(initialCallState.contains("Active", ignoreCase = true)) }
     var isMuted by remember { mutableStateOf(false) }
     var isSpeakerOn by remember { mutableStateOf(false) }
-    var isRinging by remember { mutableStateOf(initialCallState.contains("Incoming", ignoreCase = true)) }
+    var isRinging by remember { mutableStateOf(initialCallState.contains("Incoming", ignoreCase = true) || initialCallState.contains("Ringing", ignoreCase = true)) }
     
     val contactName = remember(phoneNumber) { getContactName(phoneNumber) }
-    val displayName = contactName ?: phoneNumber
+    val displayName = if (contactName != null && phoneNumber != "Unknown") contactName else phoneNumber
     
     // Monitor call state from the Call object
     DisposableEffect(call) {
@@ -202,7 +312,10 @@ fun CallScreen(
                             isRinging = false
                         }
                         Call.STATE_DISCONNECTED -> {
-                            // Call disconnected by remote party
+                            val disconnectCause = call?.details?.disconnectCause
+                            Log.d("CallScreen", "Disconnected: ${disconnectCause?.reason}, Code: ${disconnectCause?.code}")
+                            
+                            // Close screen for missed calls or any disconnect
                             onEndCall()
                         }
                         Call.STATE_RINGING -> {
