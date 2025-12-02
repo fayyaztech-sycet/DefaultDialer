@@ -257,22 +257,20 @@ class CallScreenActivity : ComponentActivity() {
         callStateState.value = newCallState
         
         // Update the UI with new call information
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            callCallback?.let { currentCall?.unregisterCallback(it) }
-            currentCall = CallScreeningService.currentCall
-            
-            // Try to get number from call if still Unknown
-            if (phoneNumberState.value == "Unknown" && currentCall != null) {
-                val number = currentCall?.details?.handle?.schemeSpecificPart
-                if (!number.isNullOrEmpty()) {
-                    phoneNumberState.value = number
-                    Log.d("CallScreenActivity", "onNewIntent - Retrieved from call: $number")
-                }
+        callCallback?.let { currentCall?.unregisterCallback(it) }
+        currentCall = CallScreeningService.currentCall
+
+        // Try to get number from call if still Unknown
+        if (phoneNumberState.value == "Unknown" && currentCall != null) {
+            val number = currentCall?.details?.handle?.schemeSpecificPart
+            if (!number.isNullOrEmpty()) {
+                phoneNumberState.value = number
+                Log.d("CallScreenActivity", "onNewIntent - Retrieved from call: $number")
             }
-            
-            callCallback?.let { currentCall?.registerCallback(it) }
         }
-        
+
+        callCallback?.let { currentCall?.registerCallback(it) }
+
         // Reset finishing flag to allow new call handling
         isFinishing = false
     }
