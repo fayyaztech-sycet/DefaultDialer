@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.DefaultDialer" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Use Material3 DayNight to allow dark-mode-friendly defaults for view-based components -->
+    <style name="Theme.DefaultDialer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary / accent colors -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorOnPrimary">@color/colorOnPrimary</item>
+
+        <!-- Background (platform attribute, safe) and surfaces -->
+        <item name="android:colorBackground">@color/colorBackground</item>
+        <item name="colorSurface">@color/colorSurface</item>
+
+        <!-- Utilities -->
+        <item name="colorSecondary">@color/colorSecondaryText</item>
+    </style>
 </resources>

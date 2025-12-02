@@ -50,6 +50,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    // Material Components (View-system) to support Material3 DayNight themes in resource XML
+    implementation("com.google.android.material:material:1.9.0")
     implementation("com.googlecode.libphonenumber:libphonenumber:8.13.20")
     implementation("androidx.compose.material:material-icons-extended:1.7.5")
     testImplementation(libs.junit)
