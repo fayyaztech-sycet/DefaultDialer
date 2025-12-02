@@ -1,3 +1,14 @@
+/*
+ * Call history viewer with pagination support
+ *
+ * - getCallHistoryPage(context, limit, offset) returns a page of results and a boolean
+ *   indicating whether more pages exist. It attempts to use LIMIT/OFFSET in the query
+ *   and falls back to scanning the cursor if the provider doesn't accept LIMIT.
+ * - getCallHistory(context) is kept as a compatibility helper that loads all pages.
+ * - CallHistoryScreen() loads the call history lazily using a default pageSize of 50,
+ *   appends unique records across pages and automatically loads more when the user
+ *   scrolls near the bottom.
+ */
 package com.sycet.defaultdialer
 
 import android.Manifest
@@ -26,6 +37,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -60,6 +72,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -70,6 +83,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.sycet.defaultdialer.utils.PhoneUtils
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,28 +124,131 @@ fun getContactName(context: Context, phone: String): String? {
     return null
 }
 
-fun getCallHistory(context: Context): List<CallRecord> {
+/**
+ * Get a single page of call history.
+ * Returns Pair(records, hasMore) where hasMore indicates whether there's another page.
+ * Uses LIMIT/OFFSET in the sortOrder when supported; falls back to scanning the cursor.
+ */
+fun getCallHistoryPage(
+    context: Context,
+    limit: Int = 50,
+    offset: Int = 0,
+    filter: String = "All",
+    search: String = ""
+): Pair<List<CallRecord>, Boolean> {
     if (ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.READ_CALL_LOG
         ) != PackageManager.PERMISSION_GRANTED
-    ) return emptyList()
+    ) return Pair(emptyList(), false)
 
-    val callList = mutableListOf<CallRecord>()
+    val requestLimit = limit + 1 // request one extra row to detect 'hasMore'
 
-    val cursor = context.contentResolver.query(
-        CallLog.Calls.CONTENT_URI,
-        arrayOf(
-            CallLog.Calls._ID,
-            CallLog.Calls.NUMBER,
-            CallLog.Calls.TYPE,
-            CallLog.Calls.DATE,
-            CallLog.Calls.DURATION
-        ),
-        null,
-        null,
-        "${CallLog.Calls.DATE} DESC"
-    )
+    // Build selection & args for server-side filtering/search
+    val selectionParts = mutableListOf<String>()
+    val selectionArgs = mutableListOf<String>()
+
+    when (filter) {
+        "Incoming" -> {
+            selectionParts.add("${CallLog.Calls.TYPE} = ?")
+            selectionArgs.add(CallLog.Calls.INCOMING_TYPE.toString())
+        }
+        "Outgoing" -> {
+            selectionParts.add("${CallLog.Calls.TYPE} = ?")
+            selectionArgs.add(CallLog.Calls.OUTGOING_TYPE.toString())
+        }
+        "Missed" -> {
+            selectionParts.add("${CallLog.Calls.TYPE} = ?")
+            selectionArgs.add(CallLog.Calls.MISSED_TYPE.toString())
+        }
+        else -> {
+            // All – no filter
+        }
+    }
+
+    if (search.isNotBlank()) {
+        val orParts = mutableListOf<String>()
+        val orArgs = mutableListOf<String>()
+
+        // match number substring
+        orParts.add("${CallLog.Calls.NUMBER} LIKE ?")
+        orArgs.add("%$search%")
+
+        // if we can read contacts, include contact name matches by resolving numbers
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                val nameMatches = mutableSetOf<String>()
+                context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                    arrayOf("%$search%"),
+                    null
+                )?.use { c ->
+                    val idx = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    while (c.moveToNext()) {
+                        val raw = c.getString(idx) ?: continue
+                        val n = PhoneUtils.normalizePhone(raw)
+                        if (n.isNotBlank()) nameMatches.add(n)
+                    }
+                }
+
+                if (nameMatches.isNotEmpty()) {
+                    val placeholders = nameMatches.joinToString(",") { "?" }
+                    orParts.add("${CallLog.Calls.NUMBER} IN ($placeholders)")
+                    orArgs.addAll(nameMatches)
+                }
+            } catch (e: Exception) {
+                // ignore errors from contact lookup and fallback to number-only search
+            }
+        }
+
+        if (orParts.isNotEmpty()) {
+            selectionParts.add("(${orParts.joinToString(" OR ")})")
+            selectionArgs.addAll(orArgs)
+        }
+    }
+
+    val selection: String? = if (selectionParts.isNotEmpty()) selectionParts.joinToString(" AND ") else null
+    val selectionArguments: Array<String>? = if (selectionArgs.isNotEmpty()) selectionArgs.toTypedArray() else null
+    var cursor = try {
+        val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $requestLimit OFFSET $offset"
+        context.contentResolver.query(
+            CallLog.Calls.CONTENT_URI,
+            arrayOf(
+                CallLog.Calls._ID,
+                CallLog.Calls.NUMBER,
+                CallLog.Calls.TYPE,
+                CallLog.Calls.DATE,
+                CallLog.Calls.DURATION
+            ),
+            selection,
+            selectionArguments,
+            sortOrder
+        )
+    } catch (e: Exception) {
+        // provider might not support LIMIT/OFFSET — we'll fall back to full query
+        null
+    }
+
+    val fallback = cursor == null
+    if (fallback) {
+        cursor = context.contentResolver.query(
+            CallLog.Calls.CONTENT_URI,
+            arrayOf(
+                CallLog.Calls._ID,
+                CallLog.Calls.NUMBER,
+                CallLog.Calls.TYPE,
+                CallLog.Calls.DATE,
+                CallLog.Calls.DURATION
+            ),
+            selection,
+            selectionArguments,
+            "${CallLog.Calls.DATE} DESC"
+        )
+    }
+
+    val records = mutableListOf<CallRecord>()
 
     cursor?.use {
         val idxId = it.getColumnIndex(CallLog.Calls._ID)
@@ -135,7 +257,15 @@ fun getCallHistory(context: Context): List<CallRecord> {
         val idxDate = it.getColumnIndex(CallLog.Calls.DATE)
         val idxDuration = it.getColumnIndex(CallLog.Calls.DURATION)
 
+        if (fallback) {
+            // move to offset or return empty if not available
+            if (!it.moveToPosition(offset)) return Pair(emptyList(), false)
+        }
+
+        var taken = 0
         while (it.moveToNext()) {
+            if (taken >= requestLimit) break
+
             val id = it.getLong(idxId)
             val rawNumber = it.getString(idxNumber) ?: "Unknown"
             val number = PhoneUtils.normalizePhone(rawNumber)
@@ -145,16 +275,36 @@ fun getCallHistory(context: Context): List<CallRecord> {
 
             val contactName = getContactName(context, number)
 
-            callList.add(
-                CallRecord(id, number, contactName, type, date, duration)
-            )
+            records.add(CallRecord(id, number, contactName, type, date, duration))
+            taken++
         }
     }
 
-    // remove duplicates safely
-    return callList.distinctBy {
-        Pair(it.number, it.date / 1000)   // normalizes milliseconds/seconds mismatch
+    // If we have more than 'limit' rows, signal that there's another page available.
+    val hasMore = records.size > limit
+    val out = if (hasMore) records.subList(0, limit) else records
+
+    // remove duplicates safely for the returned page
+    return Pair(out.distinctBy { Pair(it.number, it.date / 1000) }, hasMore)
+}
+
+/**
+ * Compatibility helper that returns all records by requesting pages repeatedly.
+ */
+fun getCallHistory(context: Context): List<CallRecord> {
+    val pageSize = 200
+    val all = mutableListOf<CallRecord>()
+    var offset = 0
+    while (true) {
+        val (page, hasMore) = getCallHistoryPage(context, pageSize, offset)
+        // avoid duplicates across pages
+        val existing = all.map { Pair(it.number, it.date / 1000) }.toSet()
+        val unique = page.filter { Pair(it.number, it.date / 1000) !in existing }
+        all.addAll(unique)
+        if (!hasMore || page.isEmpty()) break
+        offset += pageSize
     }
+    return all
 }
 
 private fun formatDate(timestamp: Long): String {
@@ -349,7 +499,16 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
 @Composable
 fun CallHistoryScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    // paginated call history state
+    // pageSize controls how many items will be loaded per page. Tune this value depending on
+    // your memory/time requirements. Default 50 is a reasonable tradeoff.
+    val pageSize = 50
     val callHistory = remember { mutableStateOf<List<CallRecord>>(emptyList()) }
+    val pageOffset = remember { mutableStateOf(0) }
+    val isLoading = remember { mutableStateOf(false) }
+    val endReached = remember { mutableStateOf(false) }
+    val lazyListState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     val hasCallLogPermission = remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -378,21 +537,60 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
     val searchQuery = remember { mutableStateOf("") }
     val showClearAllDialog = remember { mutableStateOf(false) }
 
-    LaunchedEffect(hasCallLogPermission.value, hasContactsPermission.value) {
-        if (hasCallLogPermission.value) {
-            callHistory.value = getCallHistory(context)
+    // helper to load a page and append unique entries
+    fun doLoadPage() {
+        if (isLoading.value || endReached.value) return
+        coroutineScope.launch {
+                isLoading.value = true
+                val (page, hasMore) = getCallHistoryPage(
+                    context,
+                    pageSize,
+                    pageOffset.value,
+                    selectedFilter.value,
+                    searchQuery.value
+                )
+            val existing = callHistory.value.map { Pair(it.number, it.date / 1000) }.toSet()
+            val unique = page.filter { Pair(it.number, it.date / 1000) !in existing }
+            callHistory.value = callHistory.value + unique
+            pageOffset.value += page.size
+            endReached.value = !hasMore
+            isLoading.value = false
         }
     }
 
-    val filteredHistory = callHistory.value.filter { record ->
-        val matchesFilter = selectedFilter.value == "All" ||
-                (selectedFilter.value == "Incoming" && record.type == CallLog.Calls.INCOMING_TYPE) ||
-                (selectedFilter.value == "Outgoing" && record.type == CallLog.Calls.OUTGOING_TYPE) ||
-                (selectedFilter.value == "Missed" && record.type == CallLog.Calls.MISSED_TYPE)
-        val matchesSearch = searchQuery.value.isEmpty() ||
-                (record.name ?: record.number).contains(searchQuery.value, ignoreCase = true)
-        matchesFilter && matchesSearch
+    LaunchedEffect(hasCallLogPermission.value) {
+        if (hasCallLogPermission.value) {
+            // reset state and load first page
+            pageOffset.value = 0
+            endReached.value = false
+            callHistory.value = emptyList()
+            doLoadPage()
+        }
     }
+
+    // reset and restart paging when filter or search changes
+    LaunchedEffect(selectedFilter.value, searchQuery.value) {
+        if (!hasCallLogPermission.value) return@LaunchedEffect
+        pageOffset.value = 0
+        endReached.value = false
+        callHistory.value = emptyList()
+        doLoadPage()
+    }
+
+    // observe scroll and load more when nearing the end
+    LaunchedEffect(lazyListState) {
+        snapshotFlow { lazyListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .distinctUntilChanged()
+            .collect { lastVisible ->
+                val total = lazyListState.layoutInfo.totalItemsCount
+                if (lastVisible >= total - 1 - 3 && !isLoading.value && !endReached.value) {
+                    doLoadPage()
+                }
+            }
+    }
+
+        // callHistory already contains items filtered by `selectedFilter` and `searchQuery`
+        val filteredHistory = callHistory.value
 
     Column(
         modifier = modifier
@@ -510,15 +708,30 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
             }
         } else {
             LazyColumn(
+                state = lazyListState,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(filteredHistory) { record ->
                     CallHistoryItem(record, hasWriteCallLogPermission.value) {
-                        // Refresh after delete
-                        callHistory.value = getCallHistory(context)
+                        // Refresh after delete: reset paging and reload
+                        pageOffset.value = 0
+                        endReached.value = false
+                        callHistory.value = emptyList()
+                        doLoadPage()
                     }
                 }
+
+                // footer: loading indicator
+                item {
+                    if (isLoading.value) {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else if (endReached.value && callHistory.value.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                 }
+            }
             }
         }
     }
@@ -532,7 +745,11 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
                 TextButton(
                     onClick = {
                         context.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
-                        callHistory.value = getCallHistory(context)
+                        // reset paging and reload
+                        pageOffset.value = 0
+                        endReached.value = false
+                        callHistory.value = emptyList()
+                        doLoadPage()
                         showClearAllDialog.value = false
                     },
                     colors = ButtonDefaults.textButtonColors(
