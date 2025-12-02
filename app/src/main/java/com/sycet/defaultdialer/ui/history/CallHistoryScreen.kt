@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.material3.CircularProgressIndicator
@@ -97,6 +98,7 @@ import androidx.compose.runtime.setValue
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.core.net.toUri
 
 
 /** Utility to resolve contact name */
@@ -132,7 +134,7 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
     ) { isGranted ->
         if (isGranted) {
             val intent = Intent(Intent.ACTION_CALL).apply {
-                data = Uri.parse("tel:${record.number}")
+                data = "tel:${record.number}".toUri()
             }
             localContext.startActivity(intent)
         }
@@ -188,7 +190,7 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                                 Manifest.permission.CALL_PHONE
                             ) -> {
                                 val intent = Intent(Intent.ACTION_CALL).apply {
-                                    data = Uri.parse("tel:${record.number}")
+                                    data = "tel:${record.number}".toUri()
                                 }
                                 localContext.startActivity(intent)
                             }
@@ -258,26 +260,50 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
     val hasWritePermission = remember { mutableStateOf(
         ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALL_LOG) == PackageManager.PERMISSION_GRANTED
     ) }
-    val page = remember { mutableStateOf(0) }
+    val hasMore = remember { mutableStateOf(false) }
+    val filterState = remember { mutableStateOf("All") }
+    val searchQuery = remember { mutableStateOf("") }
+    val debouncedQuery = remember { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasWritePermission.value = granted
+    }
+    val showClearAllDialog = remember { mutableStateOf(false) }
 
     // lazy-loading + pagination
-    LaunchedEffect(Unit) {
+    // initial load + support reloading when filter/search changes
+    LaunchedEffect(filterState.value, debouncedQuery.value) {
         showLoading.value = true
-        val (initialPage, hasMore) = getCallHistoryPage(context, pageSize, 0)
+        // reset paging state
+        callList.value = emptyList()
+        val (initialPage, more) = getCallHistoryPage(context, pageSize, 0, filterState.value, debouncedQuery.value)
         callList.value = initialPage
+        hasMore.value = more
         showLoading.value = false
+    }
 
-        // load next pages lazily when user scrolls near bottom
+    // debounce search input
+    LaunchedEffect(searchQuery.value) {
+        // small debounce for typing
+        delay(300)
+        debouncedQuery.value = searchQuery.value
+    }
+
+    // lazy-loading: load next page when near the bottom
+    LaunchedEffect(Unit) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { idx ->
-                if (idx + 10 >= callList.value.size && hasMore) {
-                    // load more
+                if (idx + 10 >= callList.value.size && hasMore.value && !showLoading.value) {
                     coroutineScope.launch {
                         showLoading.value = true
-                        val (next, more) = getCallHistoryPage(context, pageSize, callList.value.size)
+                        val offset = callList.value.size
+                        val (next, more) = getCallHistoryPage(context, pageSize, offset, filterState.value, debouncedQuery.value)
+                        // append unique entries
                         callList.value = (callList.value + next).distinctBy { Pair(it.number, it.date / 1000) }
+                        hasMore.value = more
                         showLoading.value = false
                     }
                 }
@@ -287,21 +313,57 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         TopAppBar(title = { Text("Call History") }, actions = {
             IconButton(onClick = { /* TODO refresh */ }) { Icon(Icons.Outlined.History, contentDescription = "Refresh") }
+            if (hasWritePermission.value) {
+                IconButton(onClick = { showClearAllDialog.value = true }) { Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear all") }
+            } else {
+                IconButton(onClick = { writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG) }) { Icon(Icons.Outlined.DeleteSweep, contentDescription = "Request permission for clear all") }
+            }
             IconButton(onClick = { /* TODO */ }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
         })
 
-        OutlinedTextField(value = "", onValueChange = {}, placeholder = { Text("Search") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            value = searchQuery.value,
+            onValueChange = { searchQuery.value = it },
+            placeholder = { Text("Search") },
+            modifier = Modifier.fillMaxWidth()
+        )
 
-        // FilterChip requires a `label` parameter — provide it explicitly so the
-        // trailing lambda isn't mis-bound to another parameter.
-        FilterChip(selected = false, onClick = {}, label = { Text("All") })
+        // Filters: All, Missed, Answered, Incoming
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = filterState.value == "All", onClick = { filterState.value = "All" }, label = { Text("All") })
+            FilterChip(selected = filterState.value == "Missed", onClick = { filterState.value = "Missed" }, label = { Text("Missed") })
+            FilterChip(selected = filterState.value == "Answered", onClick = { filterState.value = "Answered" }, label = { Text("Answered") })
+            FilterChip(selected = filterState.value == "Incoming", onClick = { filterState.value = "Incoming" }, label = { Text("Incoming") })
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(callList.value) { record ->
                 CallHistoryItem(record = record, hasWritePermission = hasWritePermission.value, onDelete = {
-                    // TODO implement delete
+                    // delete single record
+                    coroutineScope.launch {
+                        try {
+                            if (!hasWritePermission.value) {
+                                writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
+                                return@launch
+                            }
+
+                            val deleted = context.contentResolver.delete(
+                                CallLog.Calls.CONTENT_URI,
+                                "${CallLog.Calls._ID} = ?",
+                                arrayOf(record.id.toString())
+                            )
+
+                            if (deleted > 0) {
+                                // remove locally
+                                callList.value = callList.value.filter { it.id != record.id }
+                            }
+                        } catch (e: SecurityException) {
+                            // permission issue - request permission
+                            writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
+                        }
+                    }
                 })
             }
 
@@ -312,6 +374,33 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
                     }
                 }
             }
+        }
+
+        if (showClearAllDialog.value) {
+            AlertDialog(onDismissRequest = { showClearAllDialog.value = false }, title = { Text("Clear call history") }, text = { Text("Are you sure you want to permanently delete all call history? This action cannot be undone.") }, confirmButton = {
+                TextButton(onClick = {
+                    showClearAllDialog.value = false
+                    coroutineScope.launch {
+                        try {
+                            if (!hasWritePermission.value) {
+                                writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
+                                return@launch
+                            }
+
+                            context.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
+                            callList.value = emptyList()
+                            hasMore.value = false
+                        } catch (e: SecurityException) {
+                            writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
+                        }
+                    }
+
+                }) {
+                    Text("Delete all", color = MaterialTheme.colorScheme.error)
+                }
+            }, dismissButton = {
+                TextButton(onClick = { showClearAllDialog.value = false }) { Text("Cancel") }
+            })
         }
     }
 }
@@ -341,6 +430,11 @@ fun getCallHistoryPage(
     val selectionArgs = mutableListOf<String>()
 
     when (filter) {
+        "Answered" -> {
+            // answered = any type that isn't 'missed' (incoming + outgoing)
+            selectionParts.add("${CallLog.Calls.TYPE} != ?")
+            selectionArgs.add(CallLog.Calls.MISSED_TYPE.toString())
+        }
         "Incoming" -> {
             selectionParts.add("${CallLog.Calls.TYPE} = ?")
             selectionArgs.add(CallLog.Calls.INCOMING_TYPE.toString())
