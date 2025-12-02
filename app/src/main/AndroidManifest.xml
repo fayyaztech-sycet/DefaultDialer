@@ -56,7 +56,7 @@
         </activity>
         
         <activity
-            android:name=".CallScreenActivity"
+            android:name="com.sycet.defaultdialer.ui.call.CallScreenActivity"
             android:excludeFromRecents="true"
             android:launchMode="singleTop"
             android:showWhenLocked="true"

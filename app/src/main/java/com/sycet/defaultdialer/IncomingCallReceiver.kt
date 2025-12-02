@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.telephony.TelephonyManager
+import com.sycet.defaultdialer.ui.call.CallScreenActivity
 import android.util.Log
 
 class IncomingCallReceiver : BroadcastReceiver() {
@@ -14,8 +15,6 @@ class IncomingCallReceiver : BroadcastReceiver() {
         private var lastCallTime = 0L
         private var lastPhoneNumber = ""
         private const val DEBOUNCE_DELAY = 2000L // 2 seconds
-        const val EXTRA_CAN_CONFERENCE = "CAN_CONFERENCE"
-        const val EXTRA_CAN_MERGE = "CAN_MERGE"
     }
     
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -72,8 +71,8 @@ class IncomingCallReceiver : BroadcastReceiver() {
             val intent = Intent(context, CallScreenActivity::class.java).apply {
                 putExtra("PHONE_NUMBER", phoneNumber)
                 putExtra("CALL_STATE", callState)
-                putExtra(EXTRA_CAN_CONFERENCE, canConference)
-                putExtra(EXTRA_CAN_MERGE, canMerge)
+                putExtra(CallScreenActivity.EXTRA_CAN_CONFERENCE, canConference)
+                putExtra(CallScreenActivity.EXTRA_CAN_MERGE, canMerge)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)

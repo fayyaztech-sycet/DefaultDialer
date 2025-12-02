@@ -7,7 +7,7 @@ import android.telecom.DisconnectCause
 import android.telecom.InCallService
 import android.util.Log
 import androidx.annotation.RequiresApi
-import com.sycet.defaultdialer.CallScreenActivity
+import com.sycet.defaultdialer.ui.call.CallScreenActivity
 
 class CallScreeningService : InCallService() {
 
@@ -93,8 +93,8 @@ class CallScreeningService : InCallService() {
             putExtra("PHONE_NUMBER", phoneNumber)
             putExtra("CALL_STATE", callState)
             // For dialing/ringing state we do not allow conference/merge
-            putExtra("CAN_CONFERENCE", false)
-            putExtra("CAN_MERGE", false)
+            putExtra(CallScreenActivity.EXTRA_CAN_CONFERENCE, false)
+            putExtra(CallScreenActivity.EXTRA_CAN_MERGE, false)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
@@ -122,8 +122,8 @@ class CallScreeningService : InCallService() {
             val intent = Intent(this, CallScreenActivity::class.java).apply {
                 putExtra("PHONE_NUMBER", phoneNumber)
                 putExtra("CALL_STATE", callState)
-                putExtra("CAN_CONFERENCE", true)
-                putExtra("CAN_MERGE", true)
+                putExtra(CallScreenActivity.EXTRA_CAN_CONFERENCE, true)
+                putExtra(CallScreenActivity.EXTRA_CAN_MERGE, true)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)

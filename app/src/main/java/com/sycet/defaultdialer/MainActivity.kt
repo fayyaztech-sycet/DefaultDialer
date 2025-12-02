@@ -21,6 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
+import com.sycet.defaultdialer.ui.history.CallHistoryScreen
+import com.sycet.defaultdialer.ui.dialer.DialerScreen
+import com.sycet.defaultdialer.ui.contacts.ContactListScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
