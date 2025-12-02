@@ -1,6 +1,7 @@
 package com.sycet.defaultdialer
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
@@ -82,23 +83,40 @@ data class CallRecord(
     val duration: Long
 )
 
-internal fun getCallHistory(context: android.content.Context): List<CallRecord> {
-    val callRecords = mutableListOf<CallRecord>()
-    
+fun getContactName(context: Context, phone: String): String? {
+    val uri = Uri.withAppendedPath(
+        ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+        Uri.encode(phone)
+    )
+
+    context.contentResolver.query(
+        uri,
+        arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+        null,
+        null,
+        null
+    )?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            return cursor.getString(0)
+        }
+    }
+    return null
+}
+
+fun getCallHistory(context: Context): List<CallRecord> {
     if (ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.READ_CALL_LOG
         ) != PackageManager.PERMISSION_GRANTED
-    ) {
-        return callRecords
-    }
+    ) return emptyList()
 
-    val cursor: Cursor? = context.contentResolver.query(
+    val callList = mutableListOf<CallRecord>()
+
+    val cursor = context.contentResolver.query(
         CallLog.Calls.CONTENT_URI,
         arrayOf(
             CallLog.Calls._ID,
             CallLog.Calls.NUMBER,
-            CallLog.Calls.CACHED_NAME,
             CallLog.Calls.TYPE,
             CallLog.Calls.DATE,
             CallLog.Calls.DURATION
@@ -109,26 +127,31 @@ internal fun getCallHistory(context: android.content.Context): List<CallRecord> 
     )
 
     cursor?.use {
-        val idIndex = it.getColumnIndex(CallLog.Calls._ID)
-        val numberIndex = it.getColumnIndex(CallLog.Calls.NUMBER)
-        val nameIndex = it.getColumnIndex(CallLog.Calls.CACHED_NAME)
-        val typeIndex = it.getColumnIndex(CallLog.Calls.TYPE)
-        val dateIndex = it.getColumnIndex(CallLog.Calls.DATE)
-        val durationIndex = it.getColumnIndex(CallLog.Calls.DURATION)
+        val idxId = it.getColumnIndex(CallLog.Calls._ID)
+        val idxNumber = it.getColumnIndex(CallLog.Calls.NUMBER)
+        val idxType = it.getColumnIndex(CallLog.Calls.TYPE)
+        val idxDate = it.getColumnIndex(CallLog.Calls.DATE)
+        val idxDuration = it.getColumnIndex(CallLog.Calls.DURATION)
 
         while (it.moveToNext()) {
-            val id = it.getLong(idIndex)
-            val number = it.getString(numberIndex) ?: "Unknown"
-            val name = it.getString(nameIndex)
-            val type = it.getInt(typeIndex)
-            val date = it.getLong(dateIndex)
-            val duration = it.getLong(durationIndex)
+            val id = it.getLong(idxId)
+            val number = it.getString(idxNumber) ?: "Unknown"
+            val type = it.getInt(idxType)
+            val date = it.getLong(idxDate)
+            val duration = it.getLong(idxDuration)
 
-            callRecords.add(CallRecord(id, number, name, type, date, duration))
+            val contactName = getContactName(context, number)
+
+            callList.add(
+                CallRecord(id, number, contactName, type, date, duration)
+            )
         }
     }
 
-    return callRecords.groupBy { Triple(it.number, it.date, it.type) }.map { it.value.first() }
+    // remove duplicates safely
+    return callList.distinctBy {
+        Pair(it.number, it.date / 1000)   // normalizes milliseconds/seconds mismatch
+    }
 }
 
 private fun formatDate(timestamp: Long): String {
