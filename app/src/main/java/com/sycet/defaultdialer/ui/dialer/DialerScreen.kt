@@ -32,6 +32,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DialerScreen() {
     var phoneNumber by remember { mutableStateOf("") }
@@ -113,6 +116,8 @@ fun DialerScreen() {
             modifier = Modifier.fillMaxSize().padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        TopAppBar(title = { Text("Dialer") })
+        Spacer(modifier = Modifier.height(8.dp))
         // Phone number display
         Card(
                 modifier = Modifier.fillMaxWidth().height(80.dp),
