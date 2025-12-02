@@ -3,6 +3,15 @@ package com.sycet.defaultdialer.ui.history
 /*
  * Call history viewer with pagination support
  *
+ * Logging & testing notes:
+ * - Uses android.util.Log with tag "CallHistoryScreen" for debug/info/warn events.
+ * - Important log points:
+ *   - getContactName(): lookup attempts
+ *   - getCallHistoryPage(): parsing each row, fallback to full cursor, offset handling
+ *   - CallHistoryItem: permission grants, attempted calls, blocked attempts due to missing numbers
+ * - Use `adb logcat -s CallHistoryScreen` while exercising the app (tap call on history, delete, or page results)
+ *   to see these messages. That helps reproduce the dialing->disconnected issue and confirm the fix.
+ *
  * - getCallHistoryPage(context, limit, offset) returns a page of results and a boolean
  *   indicating whether more pages exist. It attempts to use LIMIT/OFFSET in the query
  *   and falls back to scanning the cursor if the provider doesn't accept LIMIT.
@@ -99,10 +108,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.core.net.toUri
+import android.util.Log
 
 
 /** Utility to resolve contact name */
 fun getContactName(context: Context, phone: String): String? {
+    Log.d("CallHistoryScreen", "getContactName(): looking up contact for phone=$phone")
     val normalized = PhoneUtils.normalizePhone(phone)
     val uri = Uri.withAppendedPath(
         ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
@@ -129,14 +140,24 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
     val localContext = LocalContext.current
     val menuExpanded = remember { mutableStateOf(false) }
     val showDeleteDialog = remember { mutableStateOf(false) }
+    val showInvalidNumberDialog = remember { mutableStateOf(false) }
     val callPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            val intent = Intent(Intent.ACTION_CALL).apply {
-                data = "tel:${record.number}".toUri()
+            Log.i("CallHistoryScreen", "CALL_PHONE permission granted for record id=${record.id} number='${record.number}'")
+            if (record.number.isNotBlank()) {
+                                // Remove leading '+' if present so the telecom stack gets a plain numeric handle
+                                val safeNumber = record.number.trimStart('+')
+                                val uri = Uri.fromParts("tel", safeNumber, null)
+                                Log.d("CallHistoryScreen","Using Uri.fromParts for call: $uri")
+                                val intent = Intent(Intent.ACTION_CALL).apply { data = uri }
+                Log.d("CallHistoryScreen", "Launching ACTION_CALL intent for number='${record.number}'")
+                localContext.startActivity(intent)
+            } else {
+                Log.w("CallHistoryScreen", "Permission granted but record.number is blank for id=${record.id}")
+                showInvalidNumberDialog.value = true
             }
-            localContext.startActivity(intent)
         }
     }
     Card(
@@ -168,7 +189,7 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
             },
             headlineContent = {
                 Text(
-                    text = record.name ?: record.number,
+                    text = record.name ?: record.number.ifBlank { "Unknown" },
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -184,15 +205,28 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Call back button
                     IconButton(onClick = {
+                        if (record.number.isBlank()) {
+                            Log.w("CallHistoryScreen", "Call attempt blocked: empty number for id=${record.id}")
+                            showInvalidNumberDialog.value = true
+                            return@IconButton
+                        }
+
                         when (PackageManager.PERMISSION_GRANTED) {
                             ContextCompat.checkSelfPermission(
                                 localContext,
                                 Manifest.permission.CALL_PHONE
                             ) -> {
-                                val intent = Intent(Intent.ACTION_CALL).apply {
-                                    data = "tel:${record.number}".toUri()
+                                Log.d("CallHistoryScreen","Placing outbound call for record id=${record.id} number='${record.number}'")
+                                try {
+                                    val safeNumberCb = record.number.trimStart('+')
+                                    val uri = Uri.fromParts("tel", safeNumberCb, null)
+                                    Log.d("CallHistoryScreen", "Using Uri.fromParts for permission callback call: $uri")
+                                    val intent = Intent(Intent.ACTION_CALL).apply { data = uri }
+                                    localContext.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Log.e("CallHistoryScreen","Failed to start call intent", e)
+                                    showInvalidNumberDialog.value = true
                                 }
-                                localContext.startActivity(intent)
                             }
                             else -> {
                                 callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
@@ -228,6 +262,17 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                     DropdownMenu(expanded = menuExpanded.value, onDismissRequest = { menuExpanded.value = false }) {
                         DropdownMenuItem(text = { Text("View Details") }, onClick = { /* TODO */ })
                         DropdownMenuItem(text = { Text("Add note") }, onClick = { /* TODO */ })
+                    }
+
+                    if (showInvalidNumberDialog.value) {
+                        AlertDialog(
+                            onDismissRequest = { showInvalidNumberDialog.value = false },
+                            title = { Text("Phone number unavailable") },
+                            text = { Text("This call log entry doesn't contain a valid phone number.") },
+                            confirmButton = {
+                                TextButton(onClick = { showInvalidNumberDialog.value = false }) { Text("OK") }
+                            }
+                        )
                     }
                 }
             }
@@ -514,11 +559,13 @@ fun getCallHistoryPage(
         )
     } catch (e: Exception) {
         // provider might not support LIMIT/OFFSET — we'll fall back to full query
+        Log.i("CallHistoryScreen", "Provider rejected LIMIT/OFFSET query — falling back to full cursor. error=${e.message}")
         null
     }
 
     val fallback = cursor == null
     if (fallback) {
+        Log.d("CallHistoryScreen", "Using fallback cursor (no LIMIT/OFFSET support) — will scan to offset=$offset")
         cursor = context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             arrayOf(
@@ -545,7 +592,10 @@ fun getCallHistoryPage(
 
         if (fallback) {
             // move to offset or return empty if not available
-            if (!it.moveToPosition(offset)) return Pair(emptyList(), false)
+            if (!it.moveToPosition(offset)) {
+                Log.w("CallHistoryScreen", "Cursor shorter than requested offset=$offset — returning empty page")
+                return Pair(emptyList(), false)
+            }
         }
 
         var taken = 0
@@ -553,13 +603,17 @@ fun getCallHistoryPage(
             if (taken >= requestLimit) break
 
             val id = it.getLong(idxId)
-            val rawNumber = it.getString(idxNumber) ?: "Unknown"
+            val rawNumber = it.getString(idxNumber) ?: ""
             val number = PhoneUtils.normalizePhone(rawNumber)
             val type = it.getInt(idxType)
             val date = it.getLong(idxDate)
             val duration = it.getLong(idxDuration)
+            Log.d(
+                "CallHistoryScreen",
+                "Parsed call row id=$id raw='$rawNumber' normalized='$number' type=$type date=$date duration=$duration"
+            )
 
-            val contactName = getContactName(context, number)
+            val contactName = if (number.isNotBlank()) getContactName(context, number) else null
 
             records.add(CallRecord(id, number, contactName, type, date, duration))
             taken++

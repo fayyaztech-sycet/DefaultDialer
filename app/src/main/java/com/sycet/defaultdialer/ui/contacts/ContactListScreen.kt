@@ -198,7 +198,9 @@ fun ContactListScreen(modifier: Modifier = Modifier) {
                         },
                         onCallClick = {
                             val intent = Intent(Intent.ACTION_CALL).apply {
-                                data = Uri.parse("tel:${contact.phoneNumber}")
+                                // strip leading + to provide a clean tel: handle
+                                val safePhone = contact.phoneNumber.trimStart('+')
+                                data = Uri.fromParts("tel", safePhone, null)
                             }
                             context.startActivity(intent)
                         }

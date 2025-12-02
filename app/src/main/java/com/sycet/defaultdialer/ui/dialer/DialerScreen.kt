@@ -260,7 +260,9 @@ fun DialerButton(text: String, onClick: () -> Unit) {
 }
 
 private fun makePhoneCall(context: android.content.Context, phoneNumber: String) {
-    val intent = Intent(Intent.ACTION_CALL).apply { data = Uri.parse("tel:$phoneNumber") }
+    // Strip leading '+' to avoid percent-encoding/formatting issues in the telecom stack
+    val safeNumber = phoneNumber.trimStart('+')
+    val intent = Intent(Intent.ACTION_CALL).apply { data = Uri.fromParts("tel", safeNumber, null) }
     context.startActivity(intent)
 }
 
