@@ -7,6 +7,8 @@ import android.database.Cursor
 import android.provider.CallLog
 import android.net.Uri
 import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -47,11 +49,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -146,6 +151,17 @@ private fun formatDuration(seconds: Long): String {
 fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: () -> Unit) {
     val localContext = LocalContext.current
     val menuExpanded = remember { mutableStateOf(false) }
+    val showDeleteDialog = remember { mutableStateOf(false) }
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val intent = Intent(Intent.ACTION_CALL).apply {
+                data = Uri.parse("tel:${record.number}")
+            }
+            localContext.startActivity(intent)
+        }
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth(),
@@ -191,10 +207,20 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Call back button
                     IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_CALL).apply {
-                            data = Uri.parse("tel:${record.number}")
+                        when (PackageManager.PERMISSION_GRANTED) {
+                            ContextCompat.checkSelfPermission(
+                                localContext,
+                                Manifest.permission.CALL_PHONE
+                            ) -> {
+                                val intent = Intent(Intent.ACTION_CALL).apply {
+                                    data = Uri.parse("tel:${record.number}")
+                                }
+                                localContext.startActivity(intent)
+                            }
+                            else -> {
+                                callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
+                            }
                         }
-                        localContext.startActivity(intent)
                     }) {
                         Icon(
                             Icons.Outlined.Call,
@@ -253,17 +279,43 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                         )
                     },
                     onClick = {
+                        showDeleteDialog.value = true
+                        menuExpanded.value = false
+                    }
+                )
+            }
+        }
+    }
+
+    if (showDeleteDialog.value) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog.value = false },
+            title = { Text("Delete Call Record") },
+            text = { Text("Are you sure you want to delete this call record?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
                         localContext.contentResolver.delete(
                             CallLog.Calls.CONTENT_URI,
                             "${CallLog.Calls._ID} = ?",
                             arrayOf(record.id.toString())
                         )
                         onDelete()
-                        menuExpanded.value = false
-                    }
-                )
+                        showDeleteDialog.value = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog.value = false }) {
+                    Text("Cancel")
+                }
             }
-        }
+        )
     }
 }
 
@@ -298,6 +350,7 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
     }
     val selectedFilter = remember { mutableStateOf("All") }
     val searchQuery = remember { mutableStateOf("") }
+    val showClearAllDialog = remember { mutableStateOf(false) }
 
     LaunchedEffect(hasCallLogPermission.value, hasContactsPermission.value) {
         if (hasCallLogPermission.value) {
@@ -324,8 +377,7 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
             actions = {
                 if (hasWriteCallLogPermission.value) {
                     IconButton(onClick = {
-                        context.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
-                        callHistory.value = getCallHistory(context)
+                        showClearAllDialog.value = true
                     }) {
                         Icon(
                             Icons.Outlined.DeleteSweep,
@@ -440,10 +492,35 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
                         callHistory.value = getCallHistory(context)
                     }
                 }
+                }
             }
         }
     }
-}
-}
 
-
+    if (showClearAllDialog.value) {
+        AlertDialog(
+            onDismissRequest = { showClearAllDialog.value = false },
+            title = { Text("Clear All Call History") },
+            text = { Text("Are you sure you want to delete all call records? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        context.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
+                        callHistory.value = getCallHistory(context)
+                        showClearAllDialog.value = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Clear All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllDialog.value = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
