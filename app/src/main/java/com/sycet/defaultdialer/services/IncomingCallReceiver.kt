@@ -1,9 +1,8 @@
-package com.sycet.defaultdialer
+package com.sycet.defaultdialer.services
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.telephony.TelephonyManager
 import com.sycet.defaultdialer.ui.call.CallScreenActivity
 import android.util.Log

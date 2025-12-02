@@ -70,7 +70,7 @@
         </activity>
         
         <service
-            android:name=".CallMonitoringService"
+            android:name=".services.CallMonitoringService"
             android:enabled="true"
             android:exported="false" />
             
@@ -87,7 +87,7 @@
         </service>
         
         <receiver
-            android:name=".IncomingCallReceiver"
+            android:name=".services.IncomingCallReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter android:priority="999">

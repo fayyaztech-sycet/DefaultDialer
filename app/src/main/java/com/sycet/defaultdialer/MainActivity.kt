@@ -21,7 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
-import com.sycet.defaultdialer.ui.history.CallHistoryScreen
+import com.sycet.defaultdialer.ui.history.*
 import com.sycet.defaultdialer.ui.dialer.DialerScreen
 import com.sycet.defaultdialer.ui.contacts.ContactListScreen
 
@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { innerPadding ->
                     when (selectedTab) {
-                        0 -> CallHistoryScreen(modifier = Modifier.padding(innerPadding))
+                        0 -> com.sycet.defaultdialer.ui.history.CallHistoryScreen(modifier = Modifier.padding(innerPadding))
                         1 -> DialerScreen()
                         2 -> ContactListScreen(modifier = Modifier.padding(innerPadding))
                     }
