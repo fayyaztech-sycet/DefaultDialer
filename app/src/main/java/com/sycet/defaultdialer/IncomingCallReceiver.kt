@@ -14,6 +14,8 @@ class IncomingCallReceiver : BroadcastReceiver() {
         private var lastCallTime = 0L
         private var lastPhoneNumber = ""
         private const val DEBOUNCE_DELAY = 2000L // 2 seconds
+        const val EXTRA_CAN_CONFERENCE = "CAN_CONFERENCE"
+        const val EXTRA_CAN_MERGE = "CAN_MERGE"
     }
     
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -46,7 +48,8 @@ class IncomingCallReceiver : BroadcastReceiver() {
                         lastPhoneNumber = phoneNumber
                         
                         Log.d(TAG, "Incoming call from: $phoneNumber")
-                        launchCallScreen(context, phoneNumber, "Incoming call...")
+                        // Incoming/ringing call - conference/merge are not available yet
+                        launchCallScreen(context, phoneNumber, "Incoming call...", canConference = false, canMerge = false)
                     }
                     TelephonyManager.EXTRA_STATE_OFFHOOK -> {
                         // Call answered or outgoing call started
@@ -63,11 +66,14 @@ class IncomingCallReceiver : BroadcastReceiver() {
         }
     }
     
-    private fun launchCallScreen(context: Context, phoneNumber: String, callState: String) {
+    private fun launchCallScreen(context: Context, phoneNumber: String, callState: String,
+                                 canConference: Boolean = false, canMerge: Boolean = false) {
         try {
             val intent = Intent(context, CallScreenActivity::class.java).apply {
                 putExtra("PHONE_NUMBER", phoneNumber)
                 putExtra("CALL_STATE", callState)
+                putExtra(EXTRA_CAN_CONFERENCE, canConference)
+                putExtra(EXTRA_CAN_MERGE, canMerge)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)

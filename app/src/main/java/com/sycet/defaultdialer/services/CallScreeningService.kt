@@ -92,6 +92,9 @@ class CallScreeningService : InCallService() {
         val intent = Intent(this, CallScreenActivity::class.java).apply {
             putExtra("PHONE_NUMBER", phoneNumber)
             putExtra("CALL_STATE", callState)
+            // For dialing/ringing state we do not allow conference/merge
+            putExtra("CAN_CONFERENCE", false)
+            putExtra("CAN_MERGE", false)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
@@ -111,5 +114,29 @@ class CallScreeningService : InCallService() {
         // In a real implementation, you would broadcast this state change
         // to update the CallScreenActivity
         Log.d(TAG, "Call state updated to: $callState")
+        // If call becomes active, tell CallScreenActivity it can show conference/merge options
+        if (callState.contains("Active", ignoreCase = true)) {
+            val phoneNumber = call?.details?.handle?.schemeSpecificPart
+                ?: call?.details?.handle?.toString()?.substringAfter("tel:")?.substringBefore("@") ?: "Unknown"
+
+            val intent = Intent(this, CallScreenActivity::class.java).apply {
+                putExtra("PHONE_NUMBER", phoneNumber)
+                putExtra("CALL_STATE", callState)
+                putExtra("CAN_CONFERENCE", true)
+                putExtra("CAN_MERGE", true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+
+            try {
+                startActivity(intent)
+                Log.d(TAG, "Call screen updated for active call: $phoneNumber")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update call screen for active call", e)
+            }
+        }
     }
 }

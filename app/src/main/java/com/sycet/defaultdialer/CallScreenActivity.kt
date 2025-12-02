@@ -62,9 +62,13 @@ class CallScreenActivity : ComponentActivity() {
     private var isFinishing = false
     private val phoneNumberState = mutableStateOf("Unknown")
     private val callStateState = mutableStateOf("Unknown")
+    private val canConferenceState = mutableStateOf(false)
+    private val canMergeState = mutableStateOf(false)
     
     companion object {
         private var isActivityRunning = false
+        const val EXTRA_CAN_CONFERENCE = "CAN_CONFERENCE"
+        const val EXTRA_CAN_MERGE = "CAN_MERGE"
     }
     
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,8 +97,11 @@ class CallScreenActivity : ComponentActivity() {
         
         phoneNumberState.value = intent.getStringExtra("PHONE_NUMBER") ?: "Unknown"
         callStateState.value = intent.getStringExtra("CALL_STATE") ?: "Unknown"
+        // Read the available actions from the launching intent
+        canConferenceState.value = intent.getBooleanExtra(EXTRA_CAN_CONFERENCE, false)
+        canMergeState.value = intent.getBooleanExtra(EXTRA_CAN_MERGE, false)
         
-        Log.d("CallScreenActivity", "Received Intent - Number: ${phoneNumberState.value}, State: ${callStateState.value}")
+        Log.d("CallScreenActivity", "Received Intent - Number: ${phoneNumberState.value}, State: ${callStateState.value}, canConference=${canConferenceState.value}, canMerge=${canMergeState.value}")
         
         // Get the current call from CallScreeningService
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -123,11 +130,15 @@ class CallScreenActivity : ComponentActivity() {
                         phoneNumber = phoneNumberState.value,
                         initialCallState = callStateState.value,
                         call = currentCall,
+                        canConference = canConferenceState.value,
+                        canMerge = canMergeState.value,
                         onAnswerCall = { answerCall() },
                         onRejectCall = { rejectCall() },
                         onEndCall = { endCall() },
                         onToggleMute = { toggleMute() },
                         onToggleSpeaker = { toggleSpeaker() },
+                        onConference = { onConference() },
+                        onMerge = { onMerge() },
                         getContactName = { number -> getContactName(number) }
                     )
                 }
@@ -205,6 +216,38 @@ class CallScreenActivity : ComponentActivity() {
         // Toggle speaker implementation
         // Requires AudioManager configuration
     }
+
+    // Conference action — placeholder (logs only). Real conference/merge requires telecom provider support.
+    private fun onConference() {
+        Log.d("CallScreenActivity", "Conference action requested — canConference=${canConferenceState.value}")
+
+        if (!canConferenceState.value) {
+            Log.d("CallScreenActivity", "Conference not available for this call")
+            return
+        }
+
+        try {
+            // Stub: actual conference operation would require Telecom/ConnectionService integration
+            Log.d("CallScreenActivity", "(Stub) Performing conference operation on currentCall: $currentCall")
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to perform conference", e)
+        }
+    }
+
+    private fun onMerge() {
+        Log.d("CallScreenActivity", "Merge action requested — canMerge=${canMergeState.value}")
+
+        if (!canMergeState.value) {
+            Log.d("CallScreenActivity", "Merge not available for this call")
+            return
+        }
+
+        try {
+            Log.d("CallScreenActivity", "(Stub) Performing merge operation on currentCall: $currentCall")
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to perform merge", e)
+        }
+    }
     
     private fun getContactName(phoneNumber: String): String? {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) 
@@ -250,12 +293,16 @@ class CallScreenActivity : ComponentActivity() {
         // Handle new intent if activity is already running
         val newPhoneNumber = intent.getStringExtra("PHONE_NUMBER") ?: "Unknown"
         val newCallState = intent.getStringExtra("CALL_STATE") ?: "Unknown"
+        val newCanConference = intent.getBooleanExtra(EXTRA_CAN_CONFERENCE, false)
+        val newCanMerge = intent.getBooleanExtra(EXTRA_CAN_MERGE, false)
         
         Log.d("CallScreenActivity", "onNewIntent - Number: $newPhoneNumber, State: $newCallState")
         
         // Update states which will trigger recomposition
         phoneNumberState.value = newPhoneNumber
         callStateState.value = newCallState
+        canConferenceState.value = newCanConference
+        canMergeState.value = newCanMerge
         
         // Update the UI with new call information
         callCallback?.let { currentCall?.unregisterCallback(it) }
@@ -287,6 +334,10 @@ fun CallScreen(
     onEndCall: () -> Unit,
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
+    canConference: Boolean = false,
+    canMerge: Boolean = false,
+    onConference: () -> Unit = {},
+    onMerge: () -> Unit = {},
     getContactName: (String) -> String?
 ) {
     var callState by remember { mutableStateOf(initialCallState) }
@@ -506,6 +557,62 @@ fun CallScreen(
                             )
                         }
                         
+                        // Conference button (if available)
+                        if (isActive && canConference) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                IconButton(
+                                    onClick = { onConference() },
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .background(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = CircleShape
+                                        )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = "Conference",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Conference",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        // Merge button (if available)
+                        if (isActive && canMerge) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                IconButton(
+                                    onClick = { onMerge() },
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .background(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = CircleShape
+                                        )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Call,
+                                        contentDescription = "Merge",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Merge",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
                         // Speaker button
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(
