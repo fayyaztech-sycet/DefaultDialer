@@ -84,9 +84,10 @@ data class CallRecord(
 )
 
 fun getContactName(context: Context, phone: String): String? {
+    val normalized = PhoneUtils.normalizePhone(phone)
     val uri = Uri.withAppendedPath(
         ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-        Uri.encode(phone)
+        Uri.encode(normalized)
     )
 
     context.contentResolver.query(
@@ -135,7 +136,8 @@ fun getCallHistory(context: Context): List<CallRecord> {
 
         while (it.moveToNext()) {
             val id = it.getLong(idxId)
-            val number = it.getString(idxNumber) ?: "Unknown"
+            val rawNumber = it.getString(idxNumber) ?: "Unknown"
+            val number = PhoneUtils.normalizePhone(rawNumber)
             val type = it.getInt(idxType)
             val date = it.getLong(idxDate)
             val duration = it.getLong(idxDuration)
