@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -112,11 +113,15 @@ fun DialerScreen() {
         }
     }
 
-    Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
+        Column(
+            modifier = Modifier
+            .background(MaterialTheme.colorScheme.background)
+            .fillMaxSize()
+            .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
     ) {
         TopAppBar(title = { Text("Dialer") })
+        // bring background in sync with app theme
         Spacer(modifier = Modifier.height(8.dp))
         // Phone number display
         Card(
@@ -221,18 +226,18 @@ fun NumberPad(
             }
 
             // Call button
-            FloatingActionButton(
+                FloatingActionButton(
                     onClick = onCallClick,
                     modifier = Modifier.size(72.dp),
-                    containerColor = Color(0xFF4CAF50)
-            ) {
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
                 Icon(
-                        imageVector = Icons.Default.Call,
-                        contentDescription = "Call",
-                        modifier = Modifier.size(32.dp),
-                        tint = Color.White
+                    imageVector = Icons.Default.Call,
+                    contentDescription = "Call",
+                    modifier = Modifier.size(32.dp)
                 )
-            }
+                }
 
             // Empty space for symmetry
             Spacer(modifier = Modifier.size(72.dp))

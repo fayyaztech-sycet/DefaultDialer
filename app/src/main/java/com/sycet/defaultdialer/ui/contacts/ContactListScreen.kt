@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.TopAppBar
@@ -129,6 +130,7 @@ fun ContactListScreen(modifier: Modifier = Modifier) {
 
     Column(
         modifier = modifier
+            .background(MaterialTheme.colorScheme.background)
             .fillMaxSize()
             .padding(16.dp)
     ) {
@@ -205,9 +207,9 @@ fun ContactListScreen(modifier: Modifier = Modifier) {
 
                 item {
                         if (showLoading.value) {
-                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            androidx.compose.material3.CircularProgressIndicator()
-                        }
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                }
                     }
                 }
             }

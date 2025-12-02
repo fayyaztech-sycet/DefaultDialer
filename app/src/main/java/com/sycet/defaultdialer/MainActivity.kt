@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
                 var selectedTab by remember { mutableIntStateOf(0) }
                 
                 Scaffold(
+                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
                     modifier = Modifier.fillMaxSize(),
                     bottomBar = {
                         NavigationBar {

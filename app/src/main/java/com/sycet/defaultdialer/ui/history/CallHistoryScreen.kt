@@ -310,7 +310,7 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
             }
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = modifier.background(MaterialTheme.colorScheme.background).fillMaxSize().padding(16.dp)) {
         TopAppBar(title = { Text("Call History") }, actions = {
             IconButton(onClick = { /* TODO refresh */ }) { Icon(Icons.Outlined.History, contentDescription = "Refresh") }
             if (hasWritePermission.value) {
@@ -370,7 +370,7 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
             item {
                 if (showLoading.value) {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
