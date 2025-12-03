@@ -122,17 +122,18 @@ fun DialerScreen() {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val isDefaultDialer = roleManager?.isRoleHeld(RoleManager.ROLE_DIALER) ?: false
-            if (!isDefaultDialer) {
-                // Request to be set as default dialer
-                val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
-                intent?.let { defaultDialerLauncher.launch(it) }
-                android.util.Log.d("Dialer-DEBUG", "App is not default dialer; tried to launch role request intent: ${intent != null}")
+                val isDefaultDialer = roleManager?.isRoleHeld(RoleManager.ROLE_DIALER) ?: false
+                // Prefer to only show the role-request when the user explicitly asks for it.
+                // Some devices/ROMs suppress the automatic role chooser when launched during
+                // Activity startup — providing a clear button improves reliability.
+                if (!isDefaultDialer) {
+                    android.util.Log.d("Dialer-DEBUG", "App is not default dialer; roleAvailable=${roleManager?.isRoleAvailable(RoleManager.ROLE_DIALER)}")
+                    // do not auto-launch the role dialog here; show a button in UI instead
+                } else {
+                    // If already default dialer, request call monitoring permissions
+                    requestCallMonitoringPermissions(context, multiplePermissionsLauncher)
+                }
             } else {
-                // If already default dialer, request call monitoring permissions
-                requestCallMonitoringPermissions(context, multiplePermissionsLauncher)
-            }
-        } else {
             // For older Android versions, just request call monitoring permissions
             requestCallMonitoringPermissions(context, multiplePermissionsLauncher)
         }
@@ -173,6 +174,26 @@ fun DialerScreen() {
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp),
             textAlign = TextAlign.Center
         )
+        // When not already default, show an explicit button so the user can trigger
+        // the system role chooser with a clear user gesture (works better on some ROMs).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val isDefaultDialer = roleManager?.isRoleHeld(RoleManager.ROLE_DIALER) ?: false
+            if (!isDefaultDialer) {
+                androidx.compose.material3.Button(
+                    onClick = {
+                        val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+                        if (intent != null) {
+                            defaultDialerLauncher.launch(intent)
+                        } else {
+                            android.util.Log.w("Dialer-DEBUG", "createRequestRoleIntent returned null")
+                        }
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Set as default Phone app", color = MaterialTheme.colorScheme.onPrimary)
+                }
+            }
+        }
         // bring background in sync with app theme
         Spacer(modifier = Modifier.height(8.dp))
         // Phone number display
