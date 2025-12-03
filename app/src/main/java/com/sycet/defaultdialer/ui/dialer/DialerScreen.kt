@@ -98,12 +98,36 @@ fun DialerScreen() {
 
     // Check if app is default dialer on launch
     LaunchedEffect(Unit) {
+        // Diagnostic checks: determine whether the app is eligible to handle
+        // tel: ACTION_DIAL/ACTION_CALL and whether RoleManager request intent is
+        // available. These logs help troubleshoot why the system may not show
+        // the app as a candidate for the Phone (dialer) role.
+        try {
+            val pm = context.packageManager
+            val pkg = context.packageName
+
+            val testDial = Intent(Intent.ACTION_DIAL, Uri.parse("tel:123"))
+            val testCall = Intent(Intent.ACTION_CALL, Uri.parse("tel:123"))
+
+            val dialResolved = pm.queryIntentActivities(testDial, PackageManager.MATCH_DEFAULT_ONLY)
+                .any { it.activityInfo.packageName == pkg }
+            val callResolved = pm.queryIntentActivities(testCall, PackageManager.MATCH_DEFAULT_ONLY)
+                .any { it.activityInfo.packageName == pkg }
+
+            val roleRequestIntent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+
+            android.util.Log.d("Dialer-DEBUG", "eligible: dialResolved=$dialResolved, callResolved=$callResolved, roleIntentNull=${roleRequestIntent==null}")
+        } catch (e: Exception) {
+            android.util.Log.w("Dialer-DEBUG", "eligiblity check failed", e)
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val isDefaultDialer = roleManager?.isRoleHeld(RoleManager.ROLE_DIALER) ?: false
             if (!isDefaultDialer) {
                 // Request to be set as default dialer
                 val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
                 intent?.let { defaultDialerLauncher.launch(it) }
+                android.util.Log.d("Dialer-DEBUG", "App is not default dialer; tried to launch role request intent: ${intent != null}")
             } else {
                 // If already default dialer, request call monitoring permissions
                 requestCallMonitoringPermissions(context, multiplePermissionsLauncher)
@@ -111,6 +135,25 @@ fun DialerScreen() {
         } else {
             // For older Android versions, just request call monitoring permissions
             requestCallMonitoringPermissions(context, multiplePermissionsLauncher)
+        }
+    }
+
+    // Simple debug indicator visible in the UI to show default-role eligibility
+    var eligibleText by remember { mutableStateOf("Checking default-eligibility…") }
+    LaunchedEffect(Unit) {
+        try {
+            val pm = context.packageManager
+            val pkg = context.packageName
+            val testDial = Intent(Intent.ACTION_DIAL, Uri.parse("tel:123"))
+            val testCall = Intent(Intent.ACTION_CALL, Uri.parse("tel:123"))
+            val dialResolved = pm.queryIntentActivities(testDial, PackageManager.MATCH_DEFAULT_ONLY)
+                .any { it.activityInfo.packageName == pkg }
+            val callResolved = pm.queryIntentActivities(testCall, PackageManager.MATCH_DEFAULT_ONLY)
+                .any { it.activityInfo.packageName == pkg }
+            val roleRequestIntent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+            eligibleText = "Dial:$dialResolved Call:$callResolved RoleIntent:${roleRequestIntent != null}"
+        } catch (e: Exception) {
+            eligibleText = "Eligibility check failed"
         }
     }
 
@@ -122,6 +165,14 @@ fun DialerScreen() {
             horizontalAlignment = Alignment.CenterHorizontally
     ) {
         TopAppBar(title = { Text("Dialer") })
+        // Debug: show eligibility status for being a default dialer
+        androidx.compose.material3.Text(
+            text = eligibleText,
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp),
+            textAlign = TextAlign.Center
+        )
         // bring background in sync with app theme
         Spacer(modifier = Modifier.height(8.dp))
         // Phone number display
