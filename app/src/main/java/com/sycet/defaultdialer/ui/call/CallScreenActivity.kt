@@ -56,7 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
-import com.sycet.defaultdialer.services.CallScreeningService
+import com.sycet.defaultdialer.services.DefaultInCallService
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -108,8 +108,8 @@ class CallScreenActivity : ComponentActivity() {
         
         Log.d("CallScreenActivity", "Received Intent - Number: ${phoneNumberState.value}, State: ${callStateState.value}")
         
-        // Get the current call from CallScreeningService
-        currentCall = CallScreeningService.currentCall
+        // Get the current call from the in-call service
+        currentCall = DefaultInCallService.currentCall
 
         // Ensure phone number is populated preferably from the current Call details.
         refreshPhoneNumberFromCallOrIntent()
@@ -371,7 +371,7 @@ class CallScreenActivity : ComponentActivity() {
             // InCallService is the reliable place to perform telecom audio routing and
             // microphone toggles.
             val newMuted = !audioManager.isMicrophoneMute
-            CallScreeningService.muteCall(newMuted)
+            DefaultInCallService.muteCall(newMuted)
             Log.d("CallScreenActivity", "Requested mute -> $newMuted")
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Mute failed", e)
@@ -383,7 +383,7 @@ class CallScreenActivity : ComponentActivity() {
             // Request the InCallService to toggle speakerphone. The real audio routing
             // work happens inside the InCallService's AudioManager for reliability.
             val newState = !audioManager.isSpeakerphoneOn
-            CallScreeningService.setSpeaker(newState)
+            DefaultInCallService.setSpeaker(newState)
             Log.d("CallScreenActivity", "Requested speaker -> $newState")
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Speaker toggle failed", e)
@@ -476,7 +476,7 @@ class CallScreenActivity : ComponentActivity() {
         
         // Update the UI with new call information
         callCallback?.let { currentCall?.unregisterCallback(it) }
-        currentCall = CallScreeningService.currentCall
+        currentCall = DefaultInCallService.currentCall
 
         // Refresh phone number preference (prefer currentCall details over intent extras)
         refreshPhoneNumberFromCallOrIntent()

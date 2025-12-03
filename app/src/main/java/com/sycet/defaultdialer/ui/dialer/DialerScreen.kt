@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import com.sycet.defaultdialer.services.CallMonitoringService
+import com.sycet.defaultdialer.services.CallStateObserverService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -91,7 +91,7 @@ fun DialerScreen() {
         val allGranted = permissions.values.all { it }
         if (allGranted) {
             // Start call monitoring service
-            val serviceIntent = Intent(context, CallMonitoringService::class.java)
+            val serviceIntent = Intent(context, CallStateObserverService::class.java)
             context.startService(serviceIntent)
         }
     }
@@ -301,7 +301,7 @@ private fun requestCallMonitoringPermissions(
         launcher.launch(permissionsToRequest.toTypedArray())
     } else {
         // All permissions already granted, start service
-        val serviceIntent = Intent(context, CallMonitoringService::class.java)
+        val serviceIntent = Intent(context, CallStateObserverService::class.java)
         context.startService(serviceIntent)
     }
 }
