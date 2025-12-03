@@ -55,6 +55,7 @@ import androidx.core.app.ActivityCompat
 import com.sycet.defaultdialer.services.CallScreeningService
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 class CallScreenActivity : ComponentActivity() {
     
@@ -104,22 +105,20 @@ class CallScreenActivity : ComponentActivity() {
         Log.d("CallScreenActivity", "Received Intent - Number: ${phoneNumberState.value}, State: ${callStateState.value}")
         
         // Get the current call from CallScreeningService
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            currentCall = CallScreeningService.currentCall
-            
-            // If still Unknown, try to get from current call
-            if (phoneNumberState.value == "Unknown" && currentCall != null) {
-                val number = currentCall?.details?.handle?.schemeSpecificPart
-                if (!number.isNullOrEmpty()) {
-                    phoneNumberState.value = number
-                    Log.d("CallScreenActivity", "Retrieved number from currentCall: $number")
-                }
+        currentCall = CallScreeningService.currentCall
+
+        // If still Unknown, try to get from current call
+        if (phoneNumberState.value == "Unknown" && currentCall != null) {
+            val number = currentCall?.details?.handle?.schemeSpecificPart
+            if (!number.isNullOrEmpty()) {
+                phoneNumberState.value = number
+                Log.d("CallScreenActivity", "Retrieved number from currentCall: $number")
             }
-            
-            // Register callback to monitor call state
-            currentCall?.registerCallback(callCallback)
         }
-        
+
+        // Register callback to monitor call state
+        currentCall?.registerCallback(callCallback)
+
         setContent {
             DefaultDialerTheme {
                 Surface(
@@ -146,7 +145,7 @@ class CallScreenActivity : ComponentActivity() {
         }
     }
     
-    private val callCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+    private val callCallback =
         object : Call.Callback() {
             override fun onStateChanged(call: Call?, state: Int) {
                 when (state) {
@@ -161,29 +160,24 @@ class CallScreenActivity : ComponentActivity() {
                 }
             }
         }
-    } else null
-    
+
     private fun answerCall() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                currentCall?.answer(0)
-                callStateState.value = "Connecting..."
-            } catch (e: Exception) {
-                Log.e("CallScreenActivity", "Failed to answer call", e)
-            }
+        try {
+            currentCall?.answer(0)
+            callStateState.value = "Connecting..."
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to answer call", e)
         }
     }
     
     private fun rejectCall() {
         if (isFinishing) return
         isFinishing = true
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                currentCall?.reject(false, null)
-            } catch (e: Exception) {
-                Log.e("CallScreenActivity", "Failed to reject call", e)
-            }
+
+        try {
+            currentCall?.reject(false, null)
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to reject call", e)
         }
         finish()
     }
@@ -191,24 +185,20 @@ class CallScreenActivity : ComponentActivity() {
     private fun endCall() {
         if (isFinishing) return
         isFinishing = true
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                currentCall?.disconnect()
-            } catch (e: Exception) {
-                Log.e("CallScreenActivity", "Failed to disconnect call", e)
-            }
+
+        try {
+            currentCall?.disconnect()
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to disconnect call", e)
         }
         finish()
     }
     
     private fun toggleMute() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            currentCall?.let { call ->
-                val isMuted = call.details.hasProperty(Call.Details.PROPERTY_IS_EXTERNAL_CALL)
-                // Toggle mute state
-                // Note: Actual mute implementation requires audio manager
-            }
+        currentCall?.let { call ->
+            val isMuted = call.details.hasProperty(Call.Details.PROPERTY_IS_EXTERNAL_CALL)
+            // Toggle mute state
+            // Note: Actual mute implementation requires audio manager
         }
     }
     
@@ -246,9 +236,7 @@ class CallScreenActivity : ComponentActivity() {
     }
     
     override fun onDestroy() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            callCallback?.let { currentCall?.unregisterCallback(it) }
-        }
+        callCallback?.let { currentCall?.unregisterCallback(it) }
         isActivityRunning = false
         isFinishing = false
         super.onDestroy()
@@ -352,7 +340,7 @@ fun CallScreen(
     
     // Monitor call state from the Call object
     DisposableEffect(call) {
-        val callback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val callback =
             object : Call.Callback() {
                 override fun onStateChanged(call: Call?, state: Int) {
                     when (state) {
@@ -364,7 +352,7 @@ fun CallScreen(
                         Call.STATE_DISCONNECTED -> {
                             val disconnectCause = call?.details?.disconnectCause
                             Log.d("CallScreen", "Disconnected: ${disconnectCause?.reason}, Code: ${disconnectCause?.code}")
-                            
+
                             // Close screen for missed calls or any disconnect
                             onEndCall()
                         }
@@ -375,16 +363,11 @@ fun CallScreen(
                     }
                 }
             }
-        } else null
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && callback != null) {
-            call?.registerCallback(callback)
-        }
-        
+
+        call?.registerCallback(callback)
+
         onDispose {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && callback != null) {
-                call?.unregisterCallback(callback)
-            }
+            call?.unregisterCallback(callback)
         }
     }
     
@@ -672,8 +655,8 @@ private fun formatDuration(seconds: Long): String {
     val secs = seconds % 60
     
     return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, secs)
+        String.format(Locale.US,"%02d:%02d:%02d", hours, minutes, secs)
     } else {
-        String.format("%02d:%02d", minutes, secs)
+        String.format(Locale.US, "%02d:%02d", minutes, secs)
     }
 }
