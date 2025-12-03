@@ -29,14 +29,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.database.Cursor
 import android.provider.CallLog
 import android.net.Uri
 import android.provider.ContactsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,26 +47,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.CallMissed
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Card
@@ -77,8 +69,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -93,22 +83,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import androidx.core.net.toUri
 import android.util.Log
+import androidx.core.net.toUri
 
 
 /** Utility to resolve contact name */
@@ -133,6 +119,48 @@ fun getContactName(context: Context, phone: String): String? {
     }
     return null
 }
+
+private fun placeCall(context: Context, rawNumber: String) {
+    if (rawNumber.isBlank()) {
+        Log.w("Dialer", "Blocked call: number empty")
+        return
+    }
+
+    // 1. Clean number (telecom standard)
+    val cleaned = rawNumber
+        .trim()
+        .replace("\\s+".toRegex(), "")     // spaces
+        .replace("[().-]".toRegex(), "")   // brackets / dashes / dots
+        .let { number ->
+            if (number.startsWith("+")) {
+                "+" + number.drop(1).replace("[^0-9]".toRegex(), "")
+            } else {
+                number.replace("[^0-9]".toRegex(), "")
+            }
+        }
+
+    if (cleaned.isBlank()) {
+        Log.w("Dialer", "Blocked call: cleaned number invalid → $rawNumber")
+        return
+    }
+
+    Log.d("Dialer", "Calling cleaned='$cleaned' original='$rawNumber'")
+
+    // 2. Build tel: URI
+    val uri = "tel:$cleaned".toUri()
+
+    // 3. Start call (only works when app is default dialer)
+    try {
+        val intent = Intent(Intent.ACTION_CALL).apply {
+            data = uri
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Log.e("Dialer", "Failed to place call", e)
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -205,28 +233,12 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Call back button
                     IconButton(onClick = {
-                        if (record.number.isBlank()) {
-                            Log.w("CallHistoryScreen", "Call attempt blocked: empty number for id=${record.id}")
-                            showInvalidNumberDialog.value = true
-                            return@IconButton
-                        }
-
                         when (PackageManager.PERMISSION_GRANTED) {
                             ContextCompat.checkSelfPermission(
                                 localContext,
                                 Manifest.permission.CALL_PHONE
                             ) -> {
-                                Log.d("CallHistoryScreen","Placing outbound call for record id=${record.id} number='${record.number}'")
-                                try {
-                                    val safeNumberCb = record.number.trimStart('+')
-                                    val uri = Uri.fromParts("tel", safeNumberCb, null)
-                                    Log.d("CallHistoryScreen", "Using Uri.fromParts for permission callback call: $uri")
-                                    val intent = Intent(Intent.ACTION_CALL).apply { data = uri }
-                                    localContext.startActivity(intent)
-                                } catch (e: Exception) {
-                                    Log.e("CallHistoryScreen","Failed to start call intent", e)
-                                    showInvalidNumberDialog.value = true
-                                }
+                                placeCall(localContext, record.number)
                             }
                             else -> {
                                 callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
@@ -626,25 +638,6 @@ fun getCallHistoryPage(
 
     // remove duplicates safely for the returned page
     return Pair(out.distinctBy { Pair(it.number, it.date / 1000) }, hasMore)
-}
-
-/**
- * Compatibility helper that returns all records by requesting pages repeatedly.
- */
-fun getCallHistory(context: Context): List<CallRecord> {
-    val pageSize = 200
-    val all = mutableListOf<CallRecord>()
-    var offset = 0
-    while (true) {
-        val (page, hasMore) = getCallHistoryPage(context, pageSize, offset)
-        // avoid duplicates across pages
-        val existing = all.map { Pair(it.number, it.date / 1000) }.toSet()
-        val unique = page.filter { Pair(it.number, it.date / 1000) !in existing }
-        all.addAll(unique)
-        if (!hasMore || page.isEmpty()) break
-        offset += pageSize
-    }
-    return all
 }
 
 private fun formatDate(timestamp: Long): String {
