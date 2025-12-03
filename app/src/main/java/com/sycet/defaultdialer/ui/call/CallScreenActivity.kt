@@ -378,8 +378,14 @@ fun CallScreen(
     var isSpeakerOn by remember { mutableStateOf(false) }
     var isRinging by remember { mutableStateOf(initialCallState.contains("Incoming", ignoreCase = true) || initialCallState.contains("Ringing", ignoreCase = true)) }
     
-    val contactName = remember(phoneNumber) { getContactName(phoneNumber) }
-    val displayName = if (contactName != null && phoneNumber != "Unknown") contactName else phoneNumber
+    // Prefer the number from the active Call's handle if available, otherwise use the passed phoneNumber
+    val resolvedNumber = call?.details?.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: phoneNumber
+
+    // Fetch contact name for the resolved number (if permission is granted). Recompute when number changes.
+    val contactName = remember(resolvedNumber) { getContactName(resolvedNumber) }
+
+    // Display name: show contact name if available; otherwise show the resolved number
+    val displayName = if (!contactName.isNullOrBlank() && resolvedNumber != "Unknown") contactName else resolvedNumber
     
     // Monitor call state from the Call object
     DisposableEffect(call) {
@@ -459,12 +465,22 @@ fun CallScreen(
                 
                 Spacer(modifier = Modifier.height(24.dp))
                 
-                // Contact name or number
+                // Contact name (or number if no contact) — large
                 Text(
                     text = displayName,
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
+                )
+
+                // Always show the phone number (compulsory requirement).
+                // If displayName already equals the number, this will duplicate; that's acceptable
+                // to guarantee the number is visible. Use a smaller, secondary-style text.
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = resolvedNumber,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
