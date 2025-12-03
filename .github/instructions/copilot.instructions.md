@@ -60,3 +60,5 @@ Example quick run (recommended):
 ./gradlew assembleDebug -q && echo "assembleDebug passed"
 ```
 
+whatever need to debug add to logs ill share logs to you from adb
+
