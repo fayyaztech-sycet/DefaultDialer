@@ -81,11 +81,16 @@
             android:turnScreenOn="true"
             android:showForAllUsers="true"
             android:theme="@style/Theme.DefaultDialer"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <!-- DEFAULT category is required on some OEMs to launch this activity from call UI -->
                 <category android:name="android.intent.category.DEFAULT" />
+                <!-- Accept tel: scheme too to improve compatibility as the in-call UI
+                     entry point on some OEMs. This won't affect the MainActivity which
+                     already handles tel: ACTION_DIAL/CALL, but helps ensure the platform
+                     can resolve an in-call UI activity where required. -->
+                <data android:scheme="tel" />
             </intent-filter>
         </activity>
 
