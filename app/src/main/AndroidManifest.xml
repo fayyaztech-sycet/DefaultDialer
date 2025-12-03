@@ -24,11 +24,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-        <!-- This app implements dialer functionality. For development and emulator
+    <!-- This app implements dialer functionality. For development and emulator
             testing we intentionally allow installs on devices without telephony
             hardware by keeping this feature optional. In production you may set
             android:required="true" if your app absolutely requires telephony. -->
-        <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <!-- Fallback features to improve compatibility with devices that advertise specific
             telephony sub-features (some tablets/legacy devices). Keep required=false to allow
             installs on devices that don't have these specific sub-features. -->
@@ -55,8 +55,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Intent filters to make this app a dialer -->
-            <!-- Keep these two filters only to avoid duplicate/ambiguous DIAL filters. -->
+            <!-- Intent filters to make this app a dialer. It's important to include
+                 both a "bare" ACTION_DIAL (no data) and a tel: ACTION_DIAL/CALL
+                 variant so RoleManager and the platform reliably detect this app
+                 as a dialer candidate. -->
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- tel: scheme handler for ACTION_DIAL and ACTION_CALL -->
             <intent-filter>
                 <action android:name="android.intent.action.DIAL" />
                 <action android:name="android.intent.action.CALL" />
@@ -94,11 +102,11 @@
             </intent-filter>
         </activity>
 
-           <!-- If `CallStateObserverService` ever runs as a foreground service, advertise phoneCall
+        <!-- If `CallStateObserverService` ever runs as a foreground service, advertise phoneCall
                type (Android 10+) so the system treats it as a call-related foreground service
                and avoids killing it during call transitions. -->
-           <service
-              android:name=".services.CallStateObserverService"
+        <service
+            android:name=".services.CallStateObserverService"
             tools:targetApi="31"
             android:enabled="true"
             android:exported="false"
@@ -109,6 +117,10 @@
             tools:targetApi="31"
             android:permission="android.permission.BIND_INCALL_SERVICE"
             android:exported="true">
+            <!-- Advertise whether the in-call service will play ringtone for incoming calls. -->
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_RINGING"
+                android:value="true" />
             <!-- Advertise basic in-call UI capability (Android 12+) -->
             <meta-data
                 android:name="android.telecom.IN_CALL_SERVICE_UI"
@@ -124,9 +136,6 @@
                 android:value="false" />
             <!-- Indicate the service can handle ringing state notifications (improves capability
             detection) -->
-            <meta-data
-                android:name="android.telecom.IN_CALL_SERVICE_RINGING"
-                android:value="true" />
             <intent-filter>
                 <action android:name="android.telecom.InCallService" />
             </intent-filter>
