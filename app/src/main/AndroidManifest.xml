@@ -24,9 +24,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- This app implements dialer functionality and requires telephony hardware to operate
-    correctly. -->
-    <uses-feature android:name="android.hardware.telephony" android:required="true" />
+        <!-- This app implements dialer functionality. For development and emulator
+            testing we intentionally allow installs on devices without telephony
+            hardware by keeping this feature optional. In production you may set
+            android:required="true" if your app absolutely requires telephony. -->
+        <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <!-- Fallback features to improve compatibility with devices that advertise specific
             telephony sub-features (some tablets/legacy devices). Keep required=false to allow
             installs on devices that don't have these specific sub-features. -->
