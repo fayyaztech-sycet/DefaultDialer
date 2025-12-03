@@ -1,8 +1,15 @@
 package com.sycet.defaultdialer.utils
 
+import android.Manifest
+import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.telecom.TelecomManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 
 object CallUtils {
@@ -43,16 +50,65 @@ object CallUtils {
         // 2. Build tel: URI
         val uri = "tel:$cleaned".toUri()
 
-        // 3. Start call (only works when app is default dialer)
+        // 3. Preferred flow: when app is the default dialer, use TelecomManager.placeCall
         try {
-            val intent =
-                    Intent(Intent.ACTION_CALL).apply {
+            val pm = context.packageManager
+
+            // If we're the default dialer (Android Q+), use TelecomManager.placeCall which is
+            // the recommended API for default phone apps.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val roleManager = context.getSystemService(RoleManager::class.java)
+                val isDefaultDialer = roleManager?.isRoleHeld(RoleManager.ROLE_DIALER) ?: false
+
+                if (isDefaultDialer) {
+                    try {
+                        val telecom = context.getSystemService(TelecomManager::class.java)
+                        telecom?.placeCall(uri, Bundle())
+                        Log.d(TAG, "Placed call using TelecomManager.placeCall: $uri")
+                        return
+                    } catch (e: Exception) {
+                        Log.w(TAG, "TelecomManager.placeCall failed, falling back: ${e.message}", e)
+                        // fall through to other strategies
+                    }
+                }
+            }
+
+            // Otherwise try ACTION_CALL when we have the CALL_PHONE permission and an activity
+            val hasCallPhone =
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) ==
+                            PackageManager.PERMISSION_GRANTED
+
+            if (hasCallPhone) {
+                val callIntent =
+                        Intent(Intent.ACTION_CALL).apply {
+                            data = uri
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+
+                if (callIntent.resolveActivity(pm) != null) {
+                    context.startActivity(callIntent)
+                    Log.d(TAG, "Placed call using ACTION_CALL: $uri")
+                    return
+                }
+            }
+
+            // Fallback to ACTION_DIAL — presents dialer UI with the number filled-in so the user
+            // can confirm/complete the call. Works regardless of default-dialer role.
+            val dialIntent =
+                    Intent(Intent.ACTION_DIAL).apply {
                         data = uri
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
-            context.startActivity(intent)
+
+            if (dialIntent.resolveActivity(pm) != null) {
+                context.startActivity(dialIntent)
+                Log.d(TAG, "Opened ACTION_DIAL as fallback: $uri")
+                return
+            }
+
+            Log.e(TAG, "No available activity to place or dial call for $uri")
         } catch (e: Exception) {
-            Log.e("Dialer", "Failed to place call", e)
+            Log.e(TAG, "Failed to place call", e)
         }
     }
 

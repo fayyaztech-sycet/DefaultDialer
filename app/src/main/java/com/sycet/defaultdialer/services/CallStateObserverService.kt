@@ -16,11 +16,9 @@ import androidx.annotation.RequiresApi
 /**
  * Lightweight service that observes telephony IDLE transitions for analytics only.
  *
- * NOTE: This class intentionally avoids performing any detailed call-state
- * calculations (durations, disconnect reasons) — those are handled by
- * DefaultInCallService (Telecom). Keeping this service minimal avoids
- * duplicate logs, race conditions, and incorrect metrics on VoLTE/IMS/OEM
- * devices.
+ * NOTE: This class intentionally avoids performing any detailed call-state calculations (durations,
+ * disconnect reasons) — those are handled by DefaultInCallService (Telecom). Keeping this service
+ * minimal avoids duplicate logs, race conditions, and incorrect metrics on VoLTE/IMS/OEM devices.
  */
 class CallStateObserverService : Service() {
 
@@ -56,34 +54,54 @@ class CallStateObserverService : Service() {
             val channelId = "call_monitor_channel"
 
             val channel =
-                NotificationChannel(channelId, "Call Monitoring", NotificationManager.IMPORTANCE_LOW)
+                    NotificationChannel(
+                            channelId,
+                            "Call Monitoring",
+                            NotificationManager.IMPORTANCE_LOW
+                    )
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
 
-            val notification = Notification.Builder(this, channelId)
-                .setContentTitle("Monitoring calls")
-                .setSmallIcon(android.R.drawable.stat_sys_phone_call)
-                .build()
+            val notification =
+                    Notification.Builder(this, channelId)
+                            .setContentTitle("Monitoring calls")
+                            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+                            .build()
 
-            startForeground(1001, notification)
+            try {
+                startForeground(1001, notification)
+            } catch (e: SecurityException) {
+                // Don't crash if the platform refuses startForeground with the configured
+                // type. Android 14+ enforces additional phone-call foreground permissions
+                // for services using the phoneCall FGS type — which our app may not have
+                // unless it's the default dialer. Log the exception detail for diagnostics
+                // and continue without making the service crash.
+                Log.e(TAG, "startForeground denied — ${e.message}", e)
+            }
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
     private fun registerTelephonyCallbackForAndroid12Plus() {
         telephonyCallback =
-            object : TelephonyCallback(), TelephonyCallback.CallStateListener {
-                override fun onCallStateChanged(state: Int) {
-                    // Only observe IDLE state and let DefaultInCallService handle
-                    // detailed metrics.
-                    if (state == TelephonyManager.CALL_STATE_IDLE) {
-                        Log.d(TAG, "CALL_STATE_IDLE observed — a call ended (observed via TelephonyCallback)")
+                object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                    override fun onCallStateChanged(state: Int) {
+                        // Only observe IDLE state and let DefaultInCallService handle
+                        // detailed metrics.
+                        if (state == TelephonyManager.CALL_STATE_IDLE) {
+                            Log.d(
+                                    TAG,
+                                    "CALL_STATE_IDLE observed — a call ended (observed via TelephonyCallback)"
+                            )
+                        }
                     }
                 }
-            }
 
         try {
-            telephonyManager.registerTelephonyCallback(mainExecutor, telephonyCallback as TelephonyCallback)
+            telephonyManager.registerTelephonyCallback(
+                    mainExecutor,
+                    telephonyCallback as TelephonyCallback
+            )
         } catch (e: SecurityException) {
             Log.e(TAG, "Permission denied for telephony callback", e)
         }
@@ -91,13 +109,16 @@ class CallStateObserverService : Service() {
 
     private fun registerPhoneStateListenerForOlderVersions() {
         phoneStateListener =
-            object : PhoneStateListener() {
-                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    if (state == TelephonyManager.CALL_STATE_IDLE) {
-                        Log.d(TAG, "CALL_STATE_IDLE observed — a call ended (observed via PhoneStateListener)")
+                object : PhoneStateListener() {
+                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                        if (state == TelephonyManager.CALL_STATE_IDLE) {
+                            Log.d(
+                                    TAG,
+                                    "CALL_STATE_IDLE observed — a call ended (observed via PhoneStateListener)"
+                            )
+                        }
                     }
                 }
-            }
 
         try {
             telephonyManager.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)

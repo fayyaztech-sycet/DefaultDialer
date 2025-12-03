@@ -100,7 +100,7 @@ import androidx.core.net.toUri
 
 /** Utility to resolve contact name */
 fun getContactName(context: Context, phone: String): String? {
-    Log.d("CallHistoryScreen", "getContactName(): looking up contact for phone=$phone")
+    // Log.d("CallHistoryScreen", "getContactName(): looking up contact for phone=$phone")
     val normalized = PhoneUtils.normalizePhone(phone)
     val uri = Uri.withAppendedPath(
         ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
