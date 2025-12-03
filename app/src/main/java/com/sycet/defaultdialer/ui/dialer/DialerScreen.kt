@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.sycet.defaultdialer.utils.CallUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,16 +160,9 @@ fun DialerScreen() {
                 },
                 onCallClick = {
                     if (phoneNumber.isNotEmpty()) {
-                        when (PackageManager.PERMISSION_GRANTED) {
-                            ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.CALL_PHONE
-                            ) -> {
-                                makePhoneCall(context, phoneNumber)
-                            }
-                            else -> {
-                                callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
-                            }
+                        // Let CallUtils centralize the permission check and call flow.
+                        CallUtils.placeCallWithPermission(context, phoneNumber) {
+                            callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
                         }
                     }
                 }
@@ -260,10 +254,7 @@ fun DialerButton(text: String, onClick: () -> Unit) {
 }
 
 private fun makePhoneCall(context: android.content.Context, phoneNumber: String) {
-    // Strip leading '+' to avoid percent-encoding/formatting issues in the telecom stack
-    val safeNumber = phoneNumber.trimStart('+')
-    val intent = Intent(Intent.ACTION_CALL).apply { data = Uri.fromParts("tel", safeNumber, null) }
-    context.startActivity(intent)
+    CallUtils.placeCall(context, phoneNumber)
 }
 
 private fun requestCallMonitoringPermissions(

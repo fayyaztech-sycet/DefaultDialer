@@ -63,6 +63,7 @@ import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ContentUris
+import com.sycet.defaultdialer.utils.CallUtils
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,6 +93,12 @@ fun ContactListScreen(modifier: Modifier = Modifier) {
     val writePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted -> hasWritePermission.value = granted }
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // no-op here — we rely on the permission flow to send the permission result back to the UI.
+        // We keep this because CallUtils.placeCallWithPermission will invoke this launcher when needed.
+    }
 
     // initial load and reload when filter/search change
     LaunchedEffect(hasPermission.value, filterState.value, debouncedQuery.value) {
@@ -197,12 +204,9 @@ fun ContactListScreen(modifier: Modifier = Modifier) {
                             }
                         },
                         onCallClick = {
-                            val intent = Intent(Intent.ACTION_CALL).apply {
-                                // strip leading + to provide a clean tel: handle
-                                val safePhone = contact.phoneNumber.trimStart('+')
-                                data = Uri.fromParts("tel", safePhone, null)
+                            CallUtils.placeCallWithPermission(context, contact.phoneNumber) {
+                                callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
                             }
-                            context.startActivity(intent)
                         }
                     )
                 }

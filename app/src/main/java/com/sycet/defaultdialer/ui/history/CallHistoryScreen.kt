@@ -94,6 +94,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.util.Log
+import com.sycet.defaultdialer.utils.CallUtils
 import androidx.core.net.toUri
 
 
@@ -120,46 +121,7 @@ fun getContactName(context: Context, phone: String): String? {
     return null
 }
 
-private fun placeCall(context: Context, rawNumber: String) {
-    if (rawNumber.isBlank()) {
-        Log.w("Dialer", "Blocked call: number empty")
-        return
-    }
-
-    // 1. Clean number (telecom standard)
-    val cleaned = rawNumber
-        .trim()
-        .replace("\\s+".toRegex(), "")     // spaces
-        .replace("[().-]".toRegex(), "")   // brackets / dashes / dots
-        .let { number ->
-            if (number.startsWith("+")) {
-                "+" + number.drop(1).replace("[^0-9]".toRegex(), "")
-            } else {
-                number.replace("[^0-9]".toRegex(), "")
-            }
-        }
-
-    if (cleaned.isBlank()) {
-        Log.w("Dialer", "Blocked call: cleaned number invalid → $rawNumber")
-        return
-    }
-
-    Log.d("Dialer", "Calling cleaned='$cleaned' original='$rawNumber'")
-
-    // 2. Build tel: URI
-    val uri = "tel:$cleaned".toUri()
-
-    // 3. Start call (only works when app is default dialer)
-    try {
-        val intent = Intent(Intent.ACTION_CALL).apply {
-            data = uri
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
-    } catch (e: Exception) {
-        Log.e("Dialer", "Failed to place call", e)
-    }
-}
+// placeCall moved to utils: CallUtils.placeCall(context, number)
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -175,13 +137,7 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
         if (isGranted) {
             Log.i("CallHistoryScreen", "CALL_PHONE permission granted for record id=${record.id} number='${record.number}'")
             if (record.number.isNotBlank()) {
-                                // Remove leading '+' if present so the telecom stack gets a plain numeric handle
-                                val safeNumber = record.number.trimStart('+')
-                                val uri = Uri.fromParts("tel", safeNumber, null)
-                                Log.d("CallHistoryScreen","Using Uri.fromParts for call: $uri")
-                                val intent = Intent(Intent.ACTION_CALL).apply { data = uri }
-                Log.d("CallHistoryScreen", "Launching ACTION_CALL intent for number='${record.number}'")
-                localContext.startActivity(intent)
+                CallUtils.placeCall(localContext, record.number)
             } else {
                 Log.w("CallHistoryScreen", "Permission granted but record.number is blank for id=${record.id}")
                 showInvalidNumberDialog.value = true
@@ -233,16 +189,9 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Call back button
                     IconButton(onClick = {
-                        when (PackageManager.PERMISSION_GRANTED) {
-                            ContextCompat.checkSelfPermission(
-                                localContext,
-                                Manifest.permission.CALL_PHONE
-                            ) -> {
-                                placeCall(localContext, record.number)
-                            }
-                            else -> {
-                                callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
-                            }
+                        // Delegate permission handling to CallUtils.placeCallWithPermission.
+                        CallUtils.placeCallWithPermission(localContext, record.number) {
+                            callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
                         }
                     }) {
                         Icon(
