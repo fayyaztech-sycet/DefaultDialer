@@ -2,6 +2,8 @@ package com.sycet.defaultdialer.ui.call
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
+import android.media.AudioManager
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.os.Build
@@ -107,14 +109,8 @@ class CallScreenActivity : ComponentActivity() {
         // Get the current call from CallScreeningService
         currentCall = CallScreeningService.currentCall
 
-        // If still Unknown, try to get from current call
-        if (phoneNumberState.value == "Unknown" && currentCall != null) {
-            val number = currentCall?.details?.handle?.schemeSpecificPart
-            if (!number.isNullOrEmpty()) {
-                phoneNumberState.value = number
-                Log.d("CallScreenActivity", "Retrieved number from currentCall: $number")
-            }
-        }
+        // Ensure phone number is populated preferably from the current Call details.
+        refreshPhoneNumberFromCallOrIntent()
 
         // Register callback to monitor call state
         currentCall?.registerCallback(callCallback)
@@ -144,6 +140,11 @@ class CallScreenActivity : ComponentActivity() {
             }
         }
     }
+
+    // AudioManager for mute / speaker control
+    private val audioManager by lazy {
+        getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
     
     private val callCallback =
         object : Call.Callback() {
@@ -151,6 +152,8 @@ class CallScreenActivity : ComponentActivity() {
                 when (state) {
                     Call.STATE_ACTIVE -> {
                         callStateState.value = "Active"
+                        // Refresh phone number when the call becomes active
+                        refreshPhoneNumberFromCallOrIntent()
                     }
                     Call.STATE_DISCONNECTED -> {
                         val disconnectCause = call?.details?.disconnectCause
@@ -165,6 +168,11 @@ class CallScreenActivity : ComponentActivity() {
         try {
             currentCall?.answer(0)
             callStateState.value = "Connecting..."
+            try {
+                audioManager.mode = AudioManager.MODE_IN_CALL
+            } catch (e: Exception) {
+                Log.w("CallScreenActivity", "Unable to set audio mode to IN_CALL", e)
+            }
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Failed to answer call", e)
         }
@@ -187,6 +195,11 @@ class CallScreenActivity : ComponentActivity() {
         isFinishing = true
 
         try {
+            // Reset audio settings when ending call
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+            audioManager.isMicrophoneMute = false
+
             currentCall?.disconnect()
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Failed to disconnect call", e)
@@ -195,16 +208,23 @@ class CallScreenActivity : ComponentActivity() {
     }
     
     private fun toggleMute() {
-        currentCall?.let { call ->
-            val isMuted = call.details.hasProperty(Call.Details.PROPERTY_IS_EXTERNAL_CALL)
-            // Toggle mute state
-            // Note: Actual mute implementation requires audio manager
+        try {
+            audioManager.mode = AudioManager.MODE_IN_CALL
+            audioManager.isMicrophoneMute = !audioManager.isMicrophoneMute
+            Log.d("CallScreenActivity", "Mute: ${audioManager.isMicrophoneMute}")
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Mute failed", e)
         }
     }
     
     private fun toggleSpeaker() {
-        // Toggle speaker implementation
-        // Requires AudioManager configuration
+        try {
+            audioManager.mode = AudioManager.MODE_IN_CALL
+            audioManager.isSpeakerphoneOn = !audioManager.isSpeakerphoneOn
+            Log.d("CallScreenActivity", "Speaker: ${audioManager.isSpeakerphoneOn}")
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Speaker toggle failed", e)
+        }
     }
     
     private fun getContactName(phoneNumber: String): String? {
@@ -234,8 +254,38 @@ class CallScreenActivity : ComponentActivity() {
         
         return contactName
     }
+
+    /**
+     * Ensures phoneNumberState is populated. Prefer the number from the active Call's handle
+     * (schemeSpecificPart) and fall back to the launching intent extra if needed.
+     */
+    private fun refreshPhoneNumberFromCallOrIntent() {
+        val numberFromCall = currentCall?.details?.handle?.schemeSpecificPart
+        if (!numberFromCall.isNullOrBlank()) {
+            if (phoneNumberState.value != numberFromCall) {
+                phoneNumberState.value = numberFromCall
+                Log.d("CallScreenActivity", "Using number from Call details: $numberFromCall")
+            }
+            return
+        }
+
+        // If call doesn't provide a number, fall back to intent extra if available
+        val numberFromIntent = intent.getStringExtra("PHONE_NUMBER")
+        if (!numberFromIntent.isNullOrBlank() && phoneNumberState.value != numberFromIntent) {
+            phoneNumberState.value = numberFromIntent
+            Log.d("CallScreenActivity", "Using number from Intent: $numberFromIntent")
+        }
+    }
     
     override fun onDestroy() {
+        // ensure audio is returned to normal when the activity is destroyed
+        try {
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+            audioManager.isMicrophoneMute = false
+        } catch (e: Exception) {
+            Log.w("CallScreenActivity", "Failed to reset audio manager on destroy", e)
+        }
         callCallback?.let { currentCall?.unregisterCallback(it) }
         isActivityRunning = false
         isFinishing = false
@@ -254,8 +304,7 @@ class CallScreenActivity : ComponentActivity() {
         
         Log.d("CallScreenActivity", "onNewIntent - Number: $newPhoneNumber, State: $newCallState")
         
-        // Update states which will trigger recomposition
-        phoneNumberState.value = newPhoneNumber
+        // Update states which will trigger recomposition (phone number is set from call/details when available)
         callStateState.value = newCallState
         canConferenceState.value = newCanConference
         canMergeState.value = newCanMerge
@@ -264,14 +313,8 @@ class CallScreenActivity : ComponentActivity() {
         callCallback?.let { currentCall?.unregisterCallback(it) }
         currentCall = CallScreeningService.currentCall
 
-        // Try to get number from call if still Unknown
-        if (phoneNumberState.value == "Unknown" && currentCall != null) {
-            val number = currentCall?.details?.handle?.schemeSpecificPart
-            if (!number.isNullOrEmpty()) {
-                phoneNumberState.value = number
-                Log.d("CallScreenActivity", "onNewIntent - Retrieved from call: $number")
-            }
-        }
+        // Refresh phone number preference (prefer currentCall details over intent extras)
+        refreshPhoneNumberFromCallOrIntent()
 
         callCallback?.let { currentCall?.registerCallback(it) }
 

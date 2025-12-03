@@ -554,7 +554,7 @@ fun getCallHistoryPage(
         if (fallback) {
             // move to offset or return empty if not available
             if (!it.moveToPosition(offset)) {
-                Log.w("CallHistoryScreen", "Cursor shorter than requested offset=$offset — returning empty page")
+//                Log.w("CallHistoryScreen", "Cursor shorter than requested offset=$offset — returning empty page")
                 return Pair(emptyList(), false)
             }
         }
@@ -569,10 +569,10 @@ fun getCallHistoryPage(
             val type = it.getInt(idxType)
             val date = it.getLong(idxDate)
             val duration = it.getLong(idxDuration)
-            Log.d(
-                "CallHistoryScreen",
-                "Parsed call row id=$id raw='$rawNumber' normalized='$number' type=$type date=$date duration=$duration"
-            )
+//            Log.d(
+//                "CallHistoryScreen",
+//                "Parsed call row id=$id raw='$rawNumber' normalized='$number' type=$type date=$date duration=$duration"
+//            )
 
             val contactName = if (number.isNotBlank()) getContactName(context, number) else null
 
