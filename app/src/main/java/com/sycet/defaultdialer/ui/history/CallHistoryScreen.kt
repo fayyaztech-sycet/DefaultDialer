@@ -21,17 +21,14 @@ package com.sycet.defaultdialer.ui.history
  *   scrolls near the bottom.
  */
 
-import com.sycet.defaultdialer.data.models.CallRecord
-import com.sycet.defaultdialer.utils.PhoneUtils
-
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.CallLog
 import android.net.Uri
+import android.provider.CallLog
 import android.provider.ContactsContract
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -39,90 +36,119 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
-import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.CallMissed
+import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ListItem
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.material3.CircularProgressIndicator
+import com.sycet.defaultdialer.data.models.CallRecord
+import com.sycet.defaultdialer.utils.CallUtils
+import com.sycet.defaultdialer.utils.PhoneUtils
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import android.util.Log
-import com.sycet.defaultdialer.utils.CallUtils
-import androidx.core.net.toUri
-
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 /** Utility to resolve contact name */
-fun getContactName(context: Context, phone: String): String? {
-    // Log.d("CallHistoryScreen", "getContactName(): looking up contact for phone=$phone")
-    val normalized = PhoneUtils.normalizePhone(phone)
-    val uri = Uri.withAppendedPath(
-        ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-        Uri.encode(normalized)
-    )
+// Simple in-memory cache for resolved contact names to avoid repeated content provider hits
+private val contactNameCache: MutableMap<String, String> = mutableMapOf()
 
-    context.contentResolver.query(
-        uri,
-        arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-        null,
-        null,
-        null
-    )?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            return cursor.getString(0)
+/**
+ * Resolve a batch of phone numbers to contact names. Returns a map of normalized-number->displayName.
+ * Uses a single query where possible and performs minimal normalization and caching.
+ */
+suspend fun resolveContactNamesForNumbers(context: Context, numbers: Set<String>): Map<String, String> {
+    if (numbers.isEmpty()) return emptyMap()
+
+    // First consult cache (very fast)
+    val missing = numbers.filter { !contactNameCache.containsKey(it) }.toSet()
+    if (missing.isEmpty()) return contactNameCache.filterKeys { numbers.contains(it) }
+
+    return withContext(Dispatchers.IO) {
+        try {
+            // We'll query the phone table for any number and normalize returned numbers for matching.
+            val placeholders = missing.joinToString(",") { "?" }
+            val selection = "${ContactsContract.CommonDataKinds.Phone.NUMBER} IN ($placeholders)"
+            val cursor = context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.NUMBER,
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
+                ),
+                selection,
+                missing.toTypedArray(),
+                null
+            )
+
+            cursor?.use { c ->
+                val idxNumber = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val idxName = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                while (c.moveToNext()) {
+                    val raw = c.getString(idxNumber) ?: continue
+                    val name = c.getString(idxName) ?: continue
+                    val norm = PhoneUtils.normalizePhone(raw)
+                    if (norm.isNotBlank()) {
+                        contactNameCache[norm] = name
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // ignore failures — fall back to whatever we found in cache
         }
+
+        // Return cached entries for requested numbers
+        contactNameCache.filterKeys { numbers.contains(it) }
     }
-    return null
 }
 
 // placeCall moved to utils: CallUtils.placeCall(context, number)
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,129 +157,164 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
     val menuExpanded = remember { mutableStateOf(false) }
     val showDeleteDialog = remember { mutableStateOf(false) }
     val showInvalidNumberDialog = remember { mutableStateOf(false) }
-    val callPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            Log.i("CallHistoryScreen", "CALL_PHONE permission granted for record id=${record.id} number='${record.number}'")
-            if (record.number.isNotBlank()) {
-                CallUtils.placeCall(localContext, record.number)
-            } else {
-                Log.w("CallHistoryScreen", "Permission granted but record.number is blank for id=${record.id}")
-                showInvalidNumberDialog.value = true
-            }
-        }
-    }
-    Card(
-        modifier = Modifier
-            .fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        shape = MaterialTheme.shapes.extraLarge,
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        ListItem(
-            leadingContent = {
-                Icon(
-                    imageVector = when (record.type) {
-                        CallLog.Calls.OUTGOING_TYPE -> Icons.AutoMirrored.Filled.CallMade
-                        CallLog.Calls.INCOMING_TYPE -> Icons.AutoMirrored.Filled.CallReceived
-                        CallLog.Calls.MISSED_TYPE -> Icons.AutoMirrored.Filled.CallMissed
-                        else -> Icons.Default.Call
-                    },
-                    contentDescription = "Call Type",
-                    tint = when (record.type) {
-                        CallLog.Calls.MISSED_TYPE -> Color(0xFFD32F2F) // red600
-                        CallLog.Calls.OUTGOING_TYPE -> Color(0xFF388E3C) // green600
-                        else -> MaterialTheme.colorScheme.primary // blue
-                    },
-                    modifier = Modifier.size(24.dp)
-                )
-            },
-            headlineContent = {
-                Text(
-                    text = record.name ?: record.number.ifBlank { "Unknown" },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            },
-            supportingContent = {
-                Text(
-                    text = "${formatDate(record.date)} • ${formatDuration(record.duration)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            trailingContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Call back button
-                    IconButton(onClick = {
-                        // Delegate permission handling to CallUtils.placeCallWithPermission.
-                        CallUtils.placeCallWithPermission(localContext, record.number) {
-                            callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
-                        }
-                    }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Call,
-                            contentDescription = "Call Back",
-                            tint = MaterialTheme.colorScheme.primary
+    val callPermissionLauncher =
+            rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+            ) { isGranted ->
+                if (isGranted) {
+                    Log.i(
+                            "CallHistoryScreen",
+                            "CALL_PHONE permission granted for record id=${record.id} number='${record.number}'"
+                    )
+                    if (record.number.isNotBlank()) {
+                        CallUtils.placeCall(localContext, record.number)
+                    } else {
+                        Log.w(
+                                "CallHistoryScreen",
+                                "Permission granted but record.number is blank for id=${record.id}"
                         )
-                    }
-
-                    // Delete button
-                    if (hasWritePermission) {
-                        IconButton(onClick = { showDeleteDialog.value = true }) {
-                            Icon(
-                                imageVector = Icons.Outlined.DeleteSweep,
-                                contentDescription = "Delete",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-
-                    IconButton(onClick = { menuExpanded.value = true }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "More",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    DropdownMenu(expanded = menuExpanded.value, onDismissRequest = { menuExpanded.value = false }) {
-                        DropdownMenuItem(text = { Text("View Details") }, onClick = { /* TODO */ })
-                        DropdownMenuItem(text = { Text("Add note") }, onClick = { /* TODO */ })
-                    }
-
-                    if (showInvalidNumberDialog.value) {
-                        AlertDialog(
-                            onDismissRequest = { showInvalidNumberDialog.value = false },
-                            title = { Text("Phone number unavailable") },
-                            text = { Text("This call log entry doesn't contain a valid phone number.") },
-                            confirmButton = {
-                                TextButton(onClick = { showInvalidNumberDialog.value = false }) { Text("OK") }
-                            }
-                        )
+                        showInvalidNumberDialog.value = true
                     }
                 }
             }
+    Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors =
+                    CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    ),
+            shape = MaterialTheme.shapes.extraLarge,
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        ListItem(
+                leadingContent = {
+                    Icon(
+                            imageVector =
+                                    when (record.type) {
+                                        CallLog.Calls.OUTGOING_TYPE ->
+                                                Icons.AutoMirrored.Filled.CallMade
+                                        CallLog.Calls.INCOMING_TYPE ->
+                                                Icons.AutoMirrored.Filled.CallReceived
+                                        CallLog.Calls.MISSED_TYPE ->
+                                                Icons.AutoMirrored.Filled.CallMissed
+                                        else -> Icons.Default.Call
+                                    },
+                            contentDescription = "Call Type",
+                            tint =
+                                    when (record.type) {
+                                        CallLog.Calls.MISSED_TYPE -> Color(0xFFD32F2F) // red600
+                                        CallLog.Calls.OUTGOING_TYPE -> Color(0xFF388E3C) // green600
+                                        else -> MaterialTheme.colorScheme.primary // blue
+                                    },
+                            modifier = Modifier.size(24.dp)
+                    )
+                },
+                headlineContent = {
+                    Text(
+                            text = record.name ?: record.number.ifBlank { "Unknown" },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                supportingContent = {
+                    Text(
+                            text =
+                                    "${formatDate(record.date)} • ${formatDuration(record.duration)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Call back button
+                        IconButton(
+                                onClick = {
+                                    // Delegate permission handling to
+                                    // CallUtils.placeCallWithPermission.
+                                    CallUtils.placeCallWithPermission(localContext, record.number) {
+                                        callPermissionLauncher.launch(
+                                                Manifest.permission.CALL_PHONE
+                                        )
+                                    }
+                                }
+                        ) {
+                            Icon(
+                                    imageVector = Icons.Outlined.Call,
+                                    contentDescription = "Call Back",
+                                    tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Delete button
+                        if (hasWritePermission) {
+                            IconButton(onClick = { showDeleteDialog.value = true }) {
+                                Icon(
+                                        imageVector = Icons.Outlined.DeleteSweep,
+                                        contentDescription = "Delete",
+                                        tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
+                        IconButton(onClick = { menuExpanded.value = true }) {
+                            Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        DropdownMenu(
+                                expanded = menuExpanded.value,
+                                onDismissRequest = { menuExpanded.value = false }
+                        ) {
+                            DropdownMenuItem(
+                                    text = { Text("View Details") },
+                                    onClick = { /* TODO */}
+                            )
+                            DropdownMenuItem(text = { Text("Add note") }, onClick = { /* TODO */})
+                        }
+
+                        if (showInvalidNumberDialog.value) {
+                            AlertDialog(
+                                    onDismissRequest = { showInvalidNumberDialog.value = false },
+                                    title = { Text("Phone number unavailable") },
+                                    text = {
+                                        Text(
+                                                "This call log entry doesn't contain a valid phone number."
+                                        )
+                                    },
+                                    confirmButton = {
+                                        TextButton(
+                                                onClick = { showInvalidNumberDialog.value = false }
+                                        ) { Text("OK") }
+                                    }
+                            )
+                        }
+                    }
+                }
         )
     }
 
     if (showDeleteDialog.value) {
-        AlertDialog(onDismissRequest = { showDeleteDialog.value = false }, title = { Text("Delete call record") }, text = { Text("Are you sure you want to delete this call log entry?") }, confirmButton = {
-            TextButton(onClick = {
-                showDeleteDialog.value = false
-                onDelete()
-            }) {
-                Text("Delete")
-            }
-        }, dismissButton = {
-            TextButton(onClick = { showDeleteDialog.value = false }) { Text("Cancel") }
-        })
+        AlertDialog(
+                onDismissRequest = { showDeleteDialog.value = false },
+                title = { Text("Delete call record") },
+                text = { Text("Are you sure you want to delete this call log entry?") },
+                confirmButton = {
+                    TextButton(
+                            onClick = {
+                                showDeleteDialog.value = false
+                                onDelete()
+                            }
+                    ) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog.value = false }) { Text("Cancel") }
+                }
+        )
     }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -263,19 +324,21 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
     val callList = remember { mutableStateOf<List<CallRecord>>(emptyList()) }
     val listState = rememberLazyListState()
     val showLoading = remember { mutableStateOf(false) }
-    val hasWritePermission = remember { mutableStateOf(
-        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALL_LOG) == PackageManager.PERMISSION_GRANTED
-    ) }
+    val hasWritePermission = remember {
+        mutableStateOf(
+                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALL_LOG) ==
+                        PackageManager.PERMISSION_GRANTED
+        )
+    }
     val hasMore = remember { mutableStateOf(false) }
     val filterState = remember { mutableStateOf("All") }
     val searchQuery = remember { mutableStateOf("") }
     val debouncedQuery = remember { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
-    val writePermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasWritePermission.value = granted
-    }
+    val writePermissionLauncher =
+            rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+            ) { granted -> hasWritePermission.value = granted }
     val showClearAllDialog = remember { mutableStateOf(false) }
 
     // lazy-loading + pagination
@@ -284,9 +347,28 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
         showLoading.value = true
         // reset paging state
         callList.value = emptyList()
-        val (initialPage, more) = getCallHistoryPage(context, pageSize, 0, filterState.value, debouncedQuery.value)
+        val (initialPage, more) =
+                getCallHistoryPage(context, pageSize, 0, filterState.value, debouncedQuery.value)
         callList.value = initialPage
         hasMore.value = more
+        // resolve contact names asynchronously for this page (non-blocking)
+        coroutineScope.launch {
+            try {
+                val numbersToResolve = initialPage.mapNotNull { it.number.takeIf { n -> n.isNotBlank() } }.toSet()
+                val resolved = resolveContactNamesForNumbers(context, numbersToResolve)
+                if (resolved.isNotEmpty()) {
+                    // update local state on main thread — map over current list in case it changed
+                    callList.value = callList.value.map { r ->
+                        if (r.name == null) {
+                            resolved[r.number]?.let { r.copy(name = it) } ?: r
+                        } else r
+                    }
+                }
+            } catch (_: Exception) {
+                // ignore resolver failures — names will remain empty
+            }
+        }
+
         showLoading.value = false
     }
 
@@ -299,78 +381,154 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
 
     // lazy-loading: load next page when near the bottom
     LaunchedEffect(Unit) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .distinctUntilChanged()
-            .collect { idx ->
-                if (idx + 10 >= callList.value.size && hasMore.value && !showLoading.value) {
+        snapshotFlow { listState.firstVisibleItemIndex }.distinctUntilChanged().collect { idx ->
+            if (idx + 10 >= callList.value.size && hasMore.value && !showLoading.value) {
+                coroutineScope.launch {
+                    showLoading.value = true
+                    val offset = callList.value.size
+                    val (next, more) =
+                            getCallHistoryPage(
+                                    context,
+                                    pageSize,
+                                    offset,
+                                    filterState.value,
+                                    debouncedQuery.value
+                            )
+                    // append unique entries
+                    callList.value =
+                            (callList.value + next).distinctBy { Pair(it.number, it.date / 1000) }
+                    // Resolve contact names for any newly appended records
                     coroutineScope.launch {
-                        showLoading.value = true
-                        val offset = callList.value.size
-                        val (next, more) = getCallHistoryPage(context, pageSize, offset, filterState.value, debouncedQuery.value)
-                        // append unique entries
-                        callList.value = (callList.value + next).distinctBy { Pair(it.number, it.date / 1000) }
-                        hasMore.value = more
-                        showLoading.value = false
+                        try {
+                            // compute numbers where name is not yet present
+                            val newlyAdded = next.mapNotNull { it.number.takeIf { n -> n.isNotBlank() } }.toSet()
+                            val resolved = resolveContactNamesForNumbers(context, newlyAdded)
+                            if (resolved.isNotEmpty()) {
+                                callList.value = callList.value.map { r ->
+                                    if (r.name == null) resolved[r.number]?.let { r.copy(name = it) } ?: r
+                                    else r
+                                }
+                            }
+                        } catch (_: Exception) {
+                            // ignore resolver failures
+                        }
                     }
+                    hasMore.value = more
+                    showLoading.value = false
                 }
             }
+        }
     }
 
-    Column(modifier = modifier.background(MaterialTheme.colorScheme.background).fillMaxSize().padding(16.dp)) {
-        TopAppBar(title = { Text("Call History") }, actions = {
-            IconButton(onClick = { /* TODO refresh */ }) { Icon(Icons.Outlined.History, contentDescription = "Refresh") }
-            if (hasWritePermission.value) {
-                IconButton(onClick = { showClearAllDialog.value = true }) { Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear all") }
-            } else {
-                IconButton(onClick = { writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG) }) { Icon(Icons.Outlined.DeleteSweep, contentDescription = "Request permission for clear all") }
-            }
-            IconButton(onClick = { /* TODO */ }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
-        })
+    Column(
+            modifier =
+                    modifier.background(MaterialTheme.colorScheme.background)
+                            .fillMaxSize()
+                            .padding(16.dp)
+    ) {
+        TopAppBar(
+                title = { Text("Call History") },
+                actions = {
+                    IconButton(onClick = { /* TODO refresh */}) {
+                        Icon(Icons.Outlined.History, contentDescription = "Refresh")
+                    }
+                    if (hasWritePermission.value) {
+                        IconButton(onClick = { showClearAllDialog.value = true }) {
+                            Icon(Icons.Outlined.DeleteSweep, contentDescription = "Clear all")
+                        }
+                    } else {
+                        IconButton(
+                                onClick = {
+                                    writePermissionLauncher.launch(
+                                            Manifest.permission.WRITE_CALL_LOG
+                                    )
+                                }
+                        ) {
+                            Icon(
+                                    Icons.Outlined.DeleteSweep,
+                                    contentDescription = "Request permission for clear all"
+                            )
+                        }
+                    }
+                    IconButton(onClick = { /* TODO */}) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                    }
+                }
+        )
 
         OutlinedTextField(
-            value = searchQuery.value,
-            onValueChange = { searchQuery.value = it },
-            placeholder = { Text("Search") },
-            modifier = Modifier.fillMaxWidth()
+                value = searchQuery.value,
+                onValueChange = { searchQuery.value = it },
+                placeholder = { Text("Search") },
+                modifier = Modifier.fillMaxWidth()
         )
 
         // Filters: All, Missed, Answered, Incoming
-        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = filterState.value == "All", onClick = { filterState.value = "All" }, label = { Text("All") })
-            FilterChip(selected = filterState.value == "Missed", onClick = { filterState.value = "Missed" }, label = { Text("Missed") })
-            FilterChip(selected = filterState.value == "Answered", onClick = { filterState.value = "Answered" }, label = { Text("Answered") })
-            FilterChip(selected = filterState.value == "Incoming", onClick = { filterState.value = "Incoming" }, label = { Text("Incoming") })
+        Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                    selected = filterState.value == "All",
+                    onClick = { filterState.value = "All" },
+                    label = { Text("All") }
+            )
+            FilterChip(
+                    selected = filterState.value == "Missed",
+                    onClick = { filterState.value = "Missed" },
+                    label = { Text("Missed") }
+            )
+            FilterChip(
+                    selected = filterState.value == "Answered",
+                    onClick = { filterState.value = "Answered" },
+                    label = { Text("Answered") }
+            )
+            FilterChip(
+                    selected = filterState.value == "Incoming",
+                    onClick = { filterState.value = "Incoming" },
+                    label = { Text("Incoming") }
+            )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(callList.value) { record ->
-                CallHistoryItem(record = record, hasWritePermission = hasWritePermission.value, onDelete = {
-                    // delete single record
-                    coroutineScope.launch {
-                        try {
-                            if (!hasWritePermission.value) {
-                                writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
-                                return@launch
-                            }
+                CallHistoryItem(
+                        record = record,
+                        hasWritePermission = hasWritePermission.value,
+                        onDelete = {
+                            // delete single record
+                            coroutineScope.launch {
+                                try {
+                                    if (!hasWritePermission.value) {
+                                        writePermissionLauncher.launch(
+                                                Manifest.permission.WRITE_CALL_LOG
+                                        )
+                                        return@launch
+                                    }
 
-                            val deleted = context.contentResolver.delete(
-                                CallLog.Calls.CONTENT_URI,
-                                "${CallLog.Calls._ID} = ?",
-                                arrayOf(record.id.toString())
-                            )
+                                    val deleted =
+                                            context.contentResolver.delete(
+                                                    CallLog.Calls.CONTENT_URI,
+                                                    "${CallLog.Calls._ID} = ?",
+                                                    arrayOf(record.id.toString())
+                                            )
 
-                            if (deleted > 0) {
-                                // remove locally
-                                callList.value = callList.value.filter { it.id != record.id }
+                                    if (deleted > 0) {
+                                        // remove locally
+                                        callList.value =
+                                                callList.value.filter { it.id != record.id }
+                                    }
+                                } catch (e: SecurityException) {
+                                    // permission issue - request permission
+                                    writePermissionLauncher.launch(
+                                            Manifest.permission.WRITE_CALL_LOG
+                                    )
+                                }
                             }
-                        } catch (e: SecurityException) {
-                            // permission issue - request permission
-                            writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
                         }
-                    }
-                })
+                )
             }
 
             item {
@@ -383,51 +541,69 @@ fun CallHistoryScreen(modifier: Modifier = Modifier) {
         }
 
         if (showClearAllDialog.value) {
-            AlertDialog(onDismissRequest = { showClearAllDialog.value = false }, title = { Text("Clear call history") }, text = { Text("Are you sure you want to permanently delete all call history? This action cannot be undone.") }, confirmButton = {
-                TextButton(onClick = {
-                    showClearAllDialog.value = false
-                    coroutineScope.launch {
-                        try {
-                            if (!hasWritePermission.value) {
-                                writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
-                                return@launch
-                            }
+            AlertDialog(
+                    onDismissRequest = { showClearAllDialog.value = false },
+                    title = { Text("Clear call history") },
+                    text = {
+                        Text(
+                                "Are you sure you want to permanently delete all call history? This action cannot be undone."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                                onClick = {
+                                    showClearAllDialog.value = false
+                                    coroutineScope.launch {
+                                        try {
+                                            if (!hasWritePermission.value) {
+                                                writePermissionLauncher.launch(
+                                                        Manifest.permission.WRITE_CALL_LOG
+                                                )
+                                                return@launch
+                                            }
 
-                            context.contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
-                            callList.value = emptyList()
-                            hasMore.value = false
-                        } catch (e: SecurityException) {
-                            writePermissionLauncher.launch(Manifest.permission.WRITE_CALL_LOG)
+                                            context.contentResolver.delete(
+                                                    CallLog.Calls.CONTENT_URI,
+                                                    null,
+                                                    null
+                                            )
+                                            callList.value = emptyList()
+                                            hasMore.value = false
+                                        } catch (e: SecurityException) {
+                                            writePermissionLauncher.launch(
+                                                    Manifest.permission.WRITE_CALL_LOG
+                                            )
+                                        }
+                                    }
+                                }
+                        ) { Text("Delete all", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showClearAllDialog.value = false }) {
+                            Text("Cancel")
                         }
                     }
-
-                }) {
-                    Text("Delete all", color = MaterialTheme.colorScheme.error)
-                }
-            }, dismissButton = {
-                TextButton(onClick = { showClearAllDialog.value = false }) { Text("Cancel") }
-            })
+            )
         }
     }
 }
 
 /**
- * Get a single page of call history.
- * Returns Pair(records, hasMore) where hasMore indicates whether there's another page.
- * Uses LIMIT/OFFSET in the sortOrder when supported; falls back to scanning the cursor.
+ * Get a single page of call history. Returns Pair(records, hasMore) where hasMore indicates whether
+ * there's another page. Uses LIMIT/OFFSET in the sortOrder when supported; falls back to scanning
+ * the cursor.
  */
 fun getCallHistoryPage(
-    context: Context,
-    limit: Int = 50,
-    offset: Int = 0,
-    filter: String = "All",
-    search: String = ""
+        context: Context,
+        limit: Int = 50,
+        offset: Int = 0,
+        filter: String = "All",
+        search: String = ""
 ): Pair<List<CallRecord>, Boolean> {
-    if (ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.READ_CALL_LOG
-        ) != PackageManager.PERMISSION_GRANTED
-    ) return Pair(emptyList(), false)
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) !=
+                    PackageManager.PERMISSION_GRANTED
+    )
+            return Pair(emptyList(), false)
 
     val requestLimit = limit + 1 // request one extra row to detect 'hasMore'
 
@@ -467,23 +643,27 @@ fun getCallHistoryPage(
         orArgs.add("%$search%")
 
         // if we can read contacts, include contact name matches by resolving numbers
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
+                        PackageManager.PERMISSION_GRANTED
+        ) {
             try {
                 val nameMatches = mutableSetOf<String>()
                 context.contentResolver.query(
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                    "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
-                    arrayOf("%$search%"),
-                    null
-                )?.use { c ->
-                    val idx = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                    while (c.moveToNext()) {
-                        val raw = c.getString(idx) ?: continue
-                        val n = PhoneUtils.normalizePhone(raw)
-                        if (n.isNotBlank()) nameMatches.add(n)
-                    }
-                }
+                                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+                                arrayOf("%$search%"),
+                                null
+                        )
+                        ?.use { c ->
+                            val idx =
+                                    c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                            while (c.moveToNext()) {
+                                val raw = c.getString(idx) ?: continue
+                                val n = PhoneUtils.normalizePhone(raw)
+                                if (n.isNotBlank()) nameMatches.add(n)
+                            }
+                        }
 
                 if (nameMatches.isNotEmpty()) {
                     val placeholders = nameMatches.joinToString(",") { "?" }
@@ -501,45 +681,55 @@ fun getCallHistoryPage(
         }
     }
 
-    val selection: String? = if (selectionParts.isNotEmpty()) selectionParts.joinToString(" AND ") else null
-    val selectionArguments: Array<String>? = if (selectionArgs.isNotEmpty()) selectionArgs.toTypedArray() else null
-    var cursor = try {
-        val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $requestLimit OFFSET $offset"
-        context.contentResolver.query(
-            CallLog.Calls.CONTENT_URI,
-            arrayOf(
-                CallLog.Calls._ID,
-                CallLog.Calls.NUMBER,
-                CallLog.Calls.TYPE,
-                CallLog.Calls.DATE,
-                CallLog.Calls.DURATION
-            ),
-            selection,
-            selectionArguments,
-            sortOrder
-        )
-    } catch (e: Exception) {
-        // provider might not support LIMIT/OFFSET — we'll fall back to full query
-        Log.i("CallHistoryScreen", "Provider rejected LIMIT/OFFSET query — falling back to full cursor. error=${e.message}")
-        null
-    }
+    val selection: String? =
+            if (selectionParts.isNotEmpty()) selectionParts.joinToString(" AND ") else null
+    val selectionArguments: Array<String>? =
+            if (selectionArgs.isNotEmpty()) selectionArgs.toTypedArray() else null
+    var cursor =
+            try {
+                val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $requestLimit OFFSET $offset"
+                context.contentResolver.query(
+                        CallLog.Calls.CONTENT_URI,
+                        arrayOf(
+                                CallLog.Calls._ID,
+                                CallLog.Calls.NUMBER,
+                                CallLog.Calls.TYPE,
+                                CallLog.Calls.DATE,
+                                CallLog.Calls.DURATION
+                        ),
+                        selection,
+                        selectionArguments,
+                        sortOrder
+                )
+            } catch (e: Exception) {
+                // provider might not support LIMIT/OFFSET — we'll fall back to full query
+                Log.i(
+                        "CallHistoryScreen",
+                        "Provider rejected LIMIT/OFFSET query — falling back to full cursor. error=${e.message}"
+                )
+                null
+            }
 
     val fallback = cursor == null
     if (fallback) {
-        Log.d("CallHistoryScreen", "Using fallback cursor (no LIMIT/OFFSET support) — will scan to offset=$offset")
-        cursor = context.contentResolver.query(
-            CallLog.Calls.CONTENT_URI,
-            arrayOf(
-                CallLog.Calls._ID,
-                CallLog.Calls.NUMBER,
-                CallLog.Calls.TYPE,
-                CallLog.Calls.DATE,
-                CallLog.Calls.DURATION
-            ),
-            selection,
-            selectionArguments,
-            "${CallLog.Calls.DATE} DESC"
+        Log.d(
+                "CallHistoryScreen",
+                "Using fallback cursor (no LIMIT/OFFSET support) — will scan to offset=$offset"
         )
+        cursor =
+                context.contentResolver.query(
+                        CallLog.Calls.CONTENT_URI,
+                        arrayOf(
+                                CallLog.Calls._ID,
+                                CallLog.Calls.NUMBER,
+                                CallLog.Calls.TYPE,
+                                CallLog.Calls.DATE,
+                                CallLog.Calls.DURATION
+                        ),
+                        selection,
+                        selectionArguments,
+                        "${CallLog.Calls.DATE} DESC"
+                )
     }
 
     val records = mutableListOf<CallRecord>()
@@ -554,7 +744,8 @@ fun getCallHistoryPage(
         if (fallback) {
             // move to offset or return empty if not available
             if (!it.moveToPosition(offset)) {
-//                Log.w("CallHistoryScreen", "Cursor shorter than requested offset=$offset — returning empty page")
+                //                Log.w("CallHistoryScreen", "Cursor shorter than requested
+                // offset=$offset — returning empty page")
                 return Pair(emptyList(), false)
             }
         }
@@ -569,14 +760,15 @@ fun getCallHistoryPage(
             val type = it.getInt(idxType)
             val date = it.getLong(idxDate)
             val duration = it.getLong(idxDuration)
-//            Log.d(
-//                "CallHistoryScreen",
-//                "Parsed call row id=$id raw='$rawNumber' normalized='$number' type=$type date=$date duration=$duration"
-//            )
+            //            Log.d(
+            //                "CallHistoryScreen",
+            //                "Parsed call row id=$id raw='$rawNumber' normalized='$number'
+            // type=$type date=$date duration=$duration"
+            //            )
 
-            val contactName = if (number.isNotBlank()) getContactName(context, number) else null
-
-            records.add(CallRecord(id, number, contactName, type, date, duration))
+            // Avoid resolving contact names here (this was causing expensive per-row I/O on the main
+            // thread). Names will be filled asynchronously in the UI using a batched resolver.
+            records.add(CallRecord(id, number, null, type, date, duration))
             taken++
         }
     }
@@ -603,5 +795,4 @@ private fun formatDuration(seconds: Long): String {
     } else {
         "Not answered"
     }
-
 }
