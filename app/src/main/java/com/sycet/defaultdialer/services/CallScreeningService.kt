@@ -1,6 +1,8 @@
 package com.sycet.defaultdialer.services
 
 import android.content.Intent
+import android.content.Context
+import android.media.AudioManager
 import android.os.Build
 import android.telecom.Call
 import android.telecom.DisconnectCause
@@ -15,6 +17,26 @@ class CallScreeningService : InCallService() {
         const val TAG = "CallScreeningService"
         var currentCall: Call? = null
         var callDisconnectedBy: String = "Unknown"
+        // Audio manager for muting / speaker control. Must be obtained from the InCallService
+        private var audioManager: AudioManager? = null
+
+        fun muteCall(isMuted: Boolean) {
+            try {
+                audioManager?.isMicrophoneMute = isMuted
+                Log.d(TAG, "muteCall -> $isMuted")
+            } catch (e: Exception) {
+                Log.w(TAG, "muteCall failed", e)
+            }
+        }
+
+        fun setSpeaker(enable: Boolean) {
+            try {
+                audioManager?.isSpeakerphoneOn = enable
+                Log.d(TAG, "setSpeaker -> $enable")
+            } catch (e: Exception) {
+                Log.w(TAG, "setSpeaker failed", e)
+            }
+        }
     }
 
     private val callCallback = object : Call.Callback() {
@@ -63,6 +85,14 @@ class CallScreeningService : InCallService() {
     override fun onCallAdded(call: Call?) {
         super.onCallAdded(call)
         currentCall = call
+        // Initialize audio manager from the InCallService context — this is required
+        // to reliably toggle microphone and speaker for telecom-managed calls.
+        try {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            Log.d(TAG, "AudioManager initialized in InCallService: mode=${audioManager?.mode}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize AudioManager in InCallService", e)
+        }
         call?.registerCallback(callCallback)
         Log.d(TAG, "Call added")
     }
@@ -70,7 +100,11 @@ class CallScreeningService : InCallService() {
     override fun onCallRemoved(call: Call?) {
         super.onCallRemoved(call)
         call?.unregisterCallback(callCallback)
-        currentCall = null
+        if (currentCall == call) currentCall = null
+        // Clear audio manager when call is removed — keep conservative cleanup
+        try {
+            audioManager = null
+        } catch (_: Exception) {}
         Log.d(TAG, "Call removed")
     }
 
