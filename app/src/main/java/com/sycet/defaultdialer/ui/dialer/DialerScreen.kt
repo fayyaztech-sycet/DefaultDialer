@@ -28,7 +28,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,10 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.sycet.defaultdialer.utils.CallUtils
+import androidx.compose.material.icons.filled.Close
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DialerScreen() {
+fun DialerScreen(onClose: (() -> Unit)? = null) {
     var phoneNumber by remember { mutableStateOf("") }
     val context = LocalContext.current
 
@@ -165,7 +165,16 @@ fun DialerScreen() {
             .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        TopAppBar(title = { Text("Dialer") })
+        TopAppBar(
+            title = { Text("Dialer") },
+            navigationIcon = {
+                if (onClose != null) {
+                    IconButton(onClick = { onClose() }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+            }
+        )
         // Debug: show eligibility status for being a default dialer
         androidx.compose.material3.Text(
             text = eligibleText,
@@ -291,19 +300,22 @@ fun NumberPad(
                 )
             }
 
-            // Call button
-                FloatingActionButton(
-                    onClick = onCallClick,
-                    modifier = Modifier.size(72.dp),
+            // Call button (use a circular Button instead of a floating one inside the layout)
+            Button(
+                onClick = onCallClick,
+                modifier = Modifier.size(72.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
+                )
+            ) {
                 Icon(
                     imageVector = Icons.Default.Call,
                     contentDescription = "Call",
                     modifier = Modifier.size(32.dp)
                 )
-                }
+            }
 
             // Empty space for symmetry
             Spacer(modifier = Modifier.size(72.dp))
