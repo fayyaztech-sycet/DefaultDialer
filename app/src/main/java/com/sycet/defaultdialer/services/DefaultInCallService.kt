@@ -2,7 +2,10 @@ package com.sycet.defaultdialer.services
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import android.telecom.Call
 import android.telecom.DisconnectCause
 import android.telecom.InCallService
@@ -24,8 +27,22 @@ class DefaultInCallService : InCallService() {
         const val TAG = "DefaultInCallService"
         var currentCall: Call? = null
         var callDisconnectedBy: String = "Unknown"
+        // Keep reference to the service instance for audio routing
+        private var instance: DefaultInCallService? = null
         // Audio manager for muting / speaker control. Must be obtained from the InCallService
         private var audioManager: AudioManager? = null
+        private var audioFocusRequest: AudioFocusRequest? = null
+        private var hasAudioFocus: Boolean = false
+        
+        private val afChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+            when (focusChange) {
+                AudioManager.AUDIOFOCUS_GAIN -> Log.d(TAG, "Audio focus gained")
+                AudioManager.AUDIOFOCUS_LOSS -> Log.d(TAG, "Audio focus lost")
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> Log.d(TAG, "Audio focus lost transient")
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Log.d(TAG, "Audio focus lost transient (duck)")
+                else -> Log.d(TAG, "Audio focus changed: $focusChange")
+            }
+        }
 
         fun muteCall(isMuted: Boolean) {
             try {
@@ -57,19 +74,171 @@ class DefaultInCallService : InCallService() {
             }
         }
 
+        private fun requestAudioFocusIfNeeded() {
+            if (hasAudioFocus || audioManager == null) return
+            
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val aa = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    
+                    // Try transient focus first
+                    var req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                        .setAudioAttributes(aa)
+                        .setAcceptsDelayedFocusGain(false)
+                        .setOnAudioFocusChangeListener(afChangeListener)
+                        .build()
+                    
+                    var status = audioManager?.requestAudioFocus(req) ?: AudioManager.AUDIOFOCUS_REQUEST_FAILED
+                    audioFocusRequest = req
+                    hasAudioFocus = status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    
+                    // Fallback to persistent focus if transient denied
+                    if (!hasAudioFocus) {
+                        Log.d(TAG, "Transient audio focus denied, trying AUDIOFOCUS_GAIN")
+                        req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                            .setAudioAttributes(aa)
+                            .setAcceptsDelayedFocusGain(false)
+                            .setOnAudioFocusChangeListener(afChangeListener)
+                            .build()
+                        status = audioManager?.requestAudioFocus(req) ?: AudioManager.AUDIOFOCUS_REQUEST_FAILED
+                        if (status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                            audioFocusRequest = req
+                            hasAudioFocus = true
+                        } else {
+                            Log.w(TAG, "AUDIOFOCUS_GAIN also denied on fallback (O+)")
+                        }
+                    }
+                } else {
+                    var status = audioManager?.requestAudioFocus(
+                        afChangeListener,
+                        AudioManager.STREAM_VOICE_CALL,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                    ) ?: AudioManager.AUDIOFOCUS_REQUEST_FAILED
+                    hasAudioFocus = status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    
+                    // Fallback to persistent focus
+                    if (!hasAudioFocus) {
+                        Log.d(TAG, "Transient audio focus denied (pre-O), trying AUDIOFOCUS_GAIN")
+                        status = audioManager?.requestAudioFocus(
+                            afChangeListener,
+                            AudioManager.STREAM_VOICE_CALL,
+                            AudioManager.AUDIOFOCUS_GAIN
+                        ) ?: AudioManager.AUDIOFOCUS_REQUEST_FAILED
+                        hasAudioFocus = status == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                        if (!hasAudioFocus) {
+                            Log.w(TAG, "AUDIOFOCUS_GAIN denied (pre-O fallback)")
+                        }
+                    }
+                }
+                
+                Log.d(TAG, "requestAudioFocusIfNeeded - granted=$hasAudioFocus")
+                if (!hasAudioFocus) {
+                    try {
+                        Log.w(
+                            TAG,
+                            "Audio focus denied — diagnostics: mode=${audioManager?.mode}, speaker=${audioManager?.isSpeakerphoneOn}, btSco=${audioManager?.isBluetoothScoOn}, btA2dp=${audioManager?.isBluetoothA2dpOn}, musicActive=${audioManager?.isMusicActive}, voiceVol=${audioManager?.getStreamVolume(AudioManager.STREAM_VOICE_CALL)}"
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to print audio diagnostics", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "requestAudioFocusIfNeeded failed", e)
+            }
+        }
+        
         fun setSpeaker(enable: Boolean) {
             try {
-                // Ensure audio mode is set to IN_COMMUNICATION before toggling speaker.
-                // Some OEMs (Samsung/Xiaomi) require this mode change otherwise
-                // speaker toggles may silently fail.
-                try {
-                    audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
-                } catch (_: Exception) {}
-
-                audioManager?.isSpeakerphoneOn = enable
-                Log.d(TAG, "setSpeaker -> $enable (mode=${'$'}{audioManager?.mode})")
+                val targetRoute = if (enable) {
+                    android.telecom.CallAudioState.ROUTE_SPEAKER
+                } else {
+                    android.telecom.CallAudioState.ROUTE_EARPIECE
+                }
+                
+                // Call setAudioRoute on the service instance if available
+                // Works on API 23+ (Android 6.0+), deprecated but still functional on API 34+
+                instance?.let { service ->
+                    @Suppress("DEPRECATION")
+                    service.setAudioRoute(targetRoute)
+                    Log.d(TAG, "Used InCallService.setAudioRoute($targetRoute) for speaker=$enable (API ${Build.VERSION.SDK_INT})")
+                    return
+                }
+                
+                // Fallback to AudioManager for older devices or if service not available
+                val am = audioManager ?: return
+                
+                // Request audio focus first - critical for speaker to work
+                requestAudioFocusIfNeeded()
+                
+                // Set mode to IN_COMMUNICATION before setting speaker
+                am.mode = AudioManager.MODE_IN_COMMUNICATION
+                
+                // If audio focus was denied, try aggressive fallback
+                if (!hasAudioFocus) {
+                    Log.d(TAG, "Audio focus not granted — running speaker fallback")
+                    
+                    // Stop Bluetooth SCO if active to force speaker routing
+                    try {
+                        @Suppress("DEPRECATION")
+                        if (am.isBluetoothScoOn) {
+                            Log.d(TAG, "Bluetooth SCO ON — stopping SCO to force speaker routing")
+                            @Suppress("DEPRECATION")
+                            am.stopBluetoothSco()
+                            am.setBluetoothScoOn(false)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed toggling Bluetooth SCO during fallback", e)
+                    }
+                    
+                    // Try setting speaker
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn = enable
+                    
+                    // If speaker state didn't take, try MODE_IN_CALL fallback
+                    @Suppress("DEPRECATION")
+                    if (am.isSpeakerphoneOn != enable) {
+                        Log.d(TAG, "Speaker state did not take — trying MODE_IN_CALL fallback")
+                        try { 
+                            am.mode = AudioManager.MODE_IN_CALL 
+                        } catch (_: Exception) {}
+                        @Suppress("DEPRECATION")
+                        am.isSpeakerphoneOn = enable
+                    }
+                } else {
+                    // Normal path with audio focus granted
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn = enable
+                }
+                
+                @Suppress("DEPRECATION")
+                val actualSpeaker = am.isSpeakerphoneOn
+                @Suppress("DEPRECATION")
+                val actualBtSco = am.isBluetoothScoOn
+                Log.d(TAG, "setSpeaker -> $enable (mode=${am.mode}) speaker=$actualSpeaker btSco=$actualBtSco")
+                Log.d(TAG, "Requested speaker -> $enable (actual=$actualSpeaker)")
             } catch (e: Exception) {
                 Log.w(TAG, "setSpeaker failed", e)
+            }
+        }
+        
+        fun abandonAudioFocus() {
+            if (!hasAudioFocus || audioManager == null) return
+            
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+                    audioFocusRequest = null
+                } else {
+                    audioManager?.abandonAudioFocus(afChangeListener)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "abandonAudioFocus failed", e)
+            } finally {
+                hasAudioFocus = false
+                Log.d(TAG, "abandonAudioFocus - released")
             }
         }
     }
@@ -132,6 +301,8 @@ class DefaultInCallService : InCallService() {
     override fun onCallAdded(call: Call?) {
         super.onCallAdded(call)
         currentCall = call
+        // Set the instance reference
+        instance = this
         // Initialize audio manager from the InCallService context — this is required
         // to reliably toggle microphone and speaker for telecom-managed calls.
         try {
@@ -148,6 +319,10 @@ class DefaultInCallService : InCallService() {
         super.onCallRemoved(call)
         call?.unregisterCallback(callCallback)
         if (currentCall == call) currentCall = null
+        // Clear instance reference when no more calls
+        if (getCalls().isEmpty()) {
+            instance = null
+        }
         // Clear audio manager when call is removed — keep conservative cleanup
         try {
             audioManager = null

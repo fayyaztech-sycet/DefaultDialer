@@ -10,13 +10,14 @@ import android.content.pm.PackageManager
 import android.database.Cursor
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.ContactsContract
 import android.telecom.Call
+import android.telecom.CallAudioState
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,9 +41,6 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,7 +61,6 @@ import androidx.core.app.ActivityCompat
 import com.sycet.defaultdialer.services.DefaultInCallService
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.util.Locale
 
 class CallScreenActivity : ComponentActivity() {
@@ -121,6 +118,13 @@ class CallScreenActivity : ComponentActivity() {
 
         // Register callback to monitor call state
         currentCall?.registerCallback(callCallback)
+        
+        // Acquire proximity wake lock by default for earpiece mode (unless speaker is already on)
+        // This ensures screen turns off when phone is near face during calls
+        if (callStateState.value.contains("Active", ignoreCase = true) || 
+            callStateState.value.contains("Dialing", ignoreCase = true)) {
+            acquireProximityWakeLock()
+        }
 
         setContent {
             DefaultDialerTheme {
@@ -152,6 +156,9 @@ class CallScreenActivity : ComponentActivity() {
     private val audioManager by lazy {
         getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
+    
+    // Proximity wake lock to turn screen off when phone is near face (earpiece mode)
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     // Audio focus helpers (used to ensure speakerphone changes take effect reliably)
     private var audioFocusRequest: AudioFocusRequest? = null
@@ -258,6 +265,46 @@ class CallScreenActivity : ComponentActivity() {
             Log.d("CallScreenActivity", "abandonAudioFocusIfNeeded - released")
         }
     }
+    
+    /**
+     * Acquire proximity wake lock to turn screen off when phone is near face.
+     * This prevents accidental touches when using earpiece.
+     */
+    private fun acquireProximityWakeLock() {
+        try {
+            if (proximityWakeLock?.isHeld == true) {
+                Log.d("CallScreenActivity", "Proximity wake lock already held")
+                return
+            }
+            
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            proximityWakeLock = powerManager.newWakeLock(
+                PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                "CallScreenActivity::ProximityWakeLock"
+            )
+            // Acquire with 10 minute timeout (typical call duration)
+            proximityWakeLock?.acquire(10 * 60 * 1000L)
+            Log.d("CallScreenActivity", "Proximity wake lock acquired - screen will turn off when near face")
+        } catch (e: Exception) {
+            Log.w("CallScreenActivity", "Failed to acquire proximity wake lock", e)
+        }
+    }
+    
+    /**
+     * Release proximity wake lock to allow screen to stay on.
+     * Used when speaker is enabled or call ends.
+     */
+    private fun releaseProximityWakeLock() {
+        try {
+            if (proximityWakeLock?.isHeld == true) {
+                proximityWakeLock?.release()
+                proximityWakeLock = null
+                Log.d("CallScreenActivity", "Proximity wake lock released - screen can stay on")
+            }
+        } catch (e: Exception) {
+            Log.w("CallScreenActivity", "Failed to release proximity wake lock", e)
+        }
+    }
 
     /**
      * Set speakerphone on/off in a robust way:
@@ -313,16 +360,13 @@ class CallScreenActivity : ComponentActivity() {
                         callStateState.value = "Active"
                         // Refresh phone number when the call becomes active
                         refreshPhoneNumberFromCallOrIntent()
+                        // Acquire proximity wake lock for active call (earpiece mode)
+                        acquireProximityWakeLock()
                     }
                     Call.STATE_DISCONNECTED -> {
                         val disconnectCause = call?.details?.disconnectCause
                         Log.d("CallScreenActivity", "Call disconnected: ${disconnectCause?.reason}")
-                        
-                        // Delay closing the activity so the user can see the disconnect reason/snackbar
-                        lifecycleScope.launch {
-                            kotlinx.coroutines.delay(2000)
-                            endCall()
-                        }
+                        endCall()
                     }
                 }
             }
@@ -336,6 +380,9 @@ class CallScreenActivity : ComponentActivity() {
                 // ensure we have audio focus and prefer communication mode so speaker routing works reliably
                 requestAudioFocusIfNeeded()
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                
+                // Acquire proximity wake lock for earpiece mode (default)
+                acquireProximityWakeLock()
             } catch (e: Exception) {
                 Log.w("CallScreenActivity", "Unable to set audio mode to IN_CALL", e)
             }
@@ -363,16 +410,25 @@ class CallScreenActivity : ComponentActivity() {
         try {
             // Reset audio settings when ending call
             audioManager.mode = AudioManager.MODE_NORMAL
+            @Suppress("DEPRECATION")
             audioManager.isSpeakerphoneOn = false
             audioManager.isMicrophoneMute = false
             // release any audio focus we might have acquired
             abandonAudioFocusIfNeeded()
+            // release proximity wake lock
+            releaseProximityWakeLock()
 
             currentCall?.disconnect()
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Failed to disconnect call", e)
         }
-        finish()
+        
+        // Use finishAndRemoveTask to completely close and remove from recents
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            finishAndRemoveTask()
+        } else {
+            finish()
+        }
     }
     
     private fun toggleMute() {
@@ -390,10 +446,24 @@ class CallScreenActivity : ComponentActivity() {
     
     private fun toggleSpeaker() {
         try {
-            // Use local robust method to toggle speakerphone
-            val newState = !audioManager.isSpeakerphoneOn
-            setSpeakerphoneOn(newState)
-            Log.d("CallScreenActivity", "Requested speaker -> $newState")
+            @Suppress("DEPRECATION")
+            val currentSpeakerState = audioManager.isSpeakerphoneOn
+            val newState = !currentSpeakerState
+            
+            // Use InCallService's setSpeaker which will use setAudioRoute() properly
+            DefaultInCallService.setSpeaker(newState)
+            
+            // Manage proximity wake lock based on speaker state
+            if (newState) {
+                // Speaker ON - release proximity lock to keep screen on
+                releaseProximityWakeLock()
+            } else {
+                // Speaker OFF (earpiece) - acquire proximity lock to turn screen off near face
+                acquireProximityWakeLock()
+            }
+            
+            @Suppress("DEPRECATION")
+            Log.d("CallScreenActivity", "Requested speaker -> $newState (actual=${audioManager.isSpeakerphoneOn})")
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Speaker toggle failed", e)
         }
@@ -453,16 +523,20 @@ class CallScreenActivity : ComponentActivity() {
         // ensure audio is returned to normal when the activity is destroyed
         try {
             audioManager.mode = AudioManager.MODE_NORMAL
+            @Suppress("DEPRECATION")
             audioManager.isSpeakerphoneOn = false
             audioManager.isMicrophoneMute = false
             // Ensure we release audio focus when activity is destroyed
             abandonAudioFocusIfNeeded()
+            // Ensure we release proximity wake lock when activity is destroyed
+            releaseProximityWakeLock()
         } catch (e: Exception) {
             Log.w("CallScreenActivity", "Failed to reset audio manager on destroy", e)
         }
-        callCallback?.let { currentCall?.unregisterCallback(it) }
+        currentCall?.unregisterCallback(callCallback)
         isActivityRunning = false
         isFinishing = false
+        Log.d("CallScreenActivity", "Activity destroyed and cleaned up")
         super.onDestroy()
     }
     
@@ -545,10 +619,7 @@ fun CallScreen(
     onMerge: () -> Unit = {},
     getContactName: (String) -> String?
 ) {
-    val snackbarHostState = remember { SnackbarHostState() }
     var callState by remember { mutableStateOf(initialCallState) }
-    // Display state: only shows important statuses (Dialing, Ringing, Active, Disconnected)
-    var displayState by remember { mutableStateOf(getImportantDisplayState(initialCallState)) }
     var elapsedTime by remember { mutableLongStateOf(0L) }
     var isActive by remember { mutableStateOf(initialCallState.contains("Active", ignoreCase = true)) }
     var isMuted by remember { mutableStateOf(false) }
@@ -572,30 +643,19 @@ fun CallScreen(
                     when (state) {
                         Call.STATE_ACTIVE -> {
                             callState = "Active"
-                            displayState = "Active"
                             isActive = true
                             isRinging = false
                         }
                         Call.STATE_DISCONNECTED -> {
                             val disconnectCause = call?.details?.disconnectCause
                             Log.d("CallScreen", "Disconnected: ${disconnectCause?.reason}, Code: ${disconnectCause?.code}")
-                            callState = "Disconnected"
-                            displayState = "Disconnected"
-                            isActive = false
-                            isRinging = false
+
                             // Close screen for missed calls or any disconnect
                             onEndCall()
                         }
                         Call.STATE_RINGING -> {
-                            callState = "Ringing"
-                            displayState = "Ringing"
                             isRinging = true
                             isActive = false
-                        }
-                        Call.STATE_DIALING -> {
-                            callState = "Dialing"
-                            displayState = "Dialing"
-                            isRinging = false
                         }
                     }
                 }
@@ -613,40 +673,6 @@ fun CallScreen(
         while (isActive) {
             delay(1000)
             elapsedTime += 1
-        }
-    }
-
-    // Handle call state changes - show snackbar for errors/non-important states and close screen
-    LaunchedEffect(callState) {
-        val isImportantState = isImportantCallState(callState)
-        
-        if (isImportantState) {
-            // Update display state for important statuses
-            displayState = getImportantDisplayState(callState)
-            // Show snackbar briefly for important states
-            val job = launch {
-                snackbarHostState.showSnackbar(
-                    message = "Call Status: $callState",
-                    duration = SnackbarDuration.Indefinite
-                )
-            }
-            delay(1000)
-            snackbarHostState.currentSnackbarData?.dismiss()
-            job.cancel()
-        } else {
-            // For error/non-important states (e.g., OUT_OF_SERVICE, Error, etc.)
-            // Show snackbar with error message and close the screen
-            Log.d("CallScreen", "Non-important state detected: $callState, showing snackbar and closing")
-            val job = launch {
-                snackbarHostState.showSnackbar(
-                    message = callState,
-                    duration = SnackbarDuration.Indefinite
-                )
-            }
-            delay(2000) // Show error for 2 seconds before closing
-            snackbarHostState.currentSnackbarData?.dismiss()
-            job.cancel()
-            onEndCall()
         }
     }
     
@@ -707,9 +733,9 @@ fun CallScreen(
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                // Call state - only show important states
+                // Call state
                 Text(
-                    text = displayState,
+                    text = callState,
                     fontSize = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -927,13 +953,6 @@ fun CallScreen(
                 }
             }
         }
-        
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp)
-        )
     }
 }
 
@@ -946,50 +965,5 @@ private fun formatDuration(seconds: Long): String {
         String.format(Locale.US,"%02d:%02d:%02d", hours, minutes, secs)
     } else {
         String.format(Locale.US, "%02d:%02d", minutes, secs)
-    }
-}
-
-/**
- * Determines if a call state is "important" and should be displayed on the call screen.
- * Important states: Dialing, Ringing, Incoming, Active, Disconnected, Connecting
- * Non-important states (errors like OUT_OF_SERVICE) should only show in snackbar and close screen.
- */
-private fun isImportantCallState(state: String): Boolean {
-    val importantKeywords = listOf(
-        "dialing", "ringing", "incoming", "active", "disconnected", 
-        "connecting", "holding", "held", "unknown"
-    )
-    val lowerState = state.lowercase()
-    
-    // Check if it's an error state
-    if (lowerState.startsWith("error:") || 
-        lowerState.contains("out of service") ||
-        lowerState.contains("out_of_service") ||
-        lowerState.contains("no service") ||
-        lowerState.contains("not registered") ||
-        lowerState.contains("network") ||
-        lowerState.contains("unavailable")) {
-        return false
-    }
-    
-    return importantKeywords.any { lowerState.contains(it) }
-}
-
-/**
- * Maps a call state to a clean display state for the UI.
- * Only returns important status labels: Dialing, Ringing, Active, Disconnected, etc.
- */
-private fun getImportantDisplayState(state: String): String {
-    val lowerState = state.lowercase()
-    
-    return when {
-        lowerState.contains("active") -> "Active"
-        lowerState.contains("dialing") -> "Dialing..."
-        lowerState.contains("ringing") -> "Ringing..."
-        lowerState.contains("incoming") -> "Incoming call..."
-        lowerState.contains("connecting") -> "Connecting..."
-        lowerState.contains("disconnected") -> "Disconnected"
-        lowerState.contains("holding") || lowerState.contains("held") -> "On Hold"
-        else -> "Connecting..." // Default to Connecting for unknown/transitional states
     }
 }

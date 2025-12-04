@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Some OEMs require PROCESS_OUTGOING_CALLS to be declared (even though deprecated)
         alongside WRITE_CALL_LOG to avoid write-call-log failures on older devices.
