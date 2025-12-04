@@ -39,6 +39,9 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +62,7 @@ import androidx.core.app.ActivityCompat
 import com.sycet.defaultdialer.services.DefaultInCallService
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class CallScreenActivity : ComponentActivity() {
@@ -536,6 +540,7 @@ fun CallScreen(
     onMerge: () -> Unit = {},
     getContactName: (String) -> String?
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
     var callState by remember { mutableStateOf(initialCallState) }
     var elapsedTime by remember { mutableLongStateOf(0L) }
     var isActive by remember { mutableStateOf(initialCallState.contains("Active", ignoreCase = true)) }
@@ -591,6 +596,19 @@ fun CallScreen(
             delay(1000)
             elapsedTime += 1
         }
+    }
+
+    // Show Snackbar on call state change
+    LaunchedEffect(callState) {
+        val job = launch {
+            snackbarHostState.showSnackbar(
+                message = "Call Status: $callState",
+                duration = SnackbarDuration.Indefinite
+            )
+        }
+        delay(1000)
+        snackbarHostState.currentSnackbarData?.dismiss()
+        job.cancel()
     }
     
     Box(
@@ -870,6 +888,13 @@ fun CallScreen(
                 }
             }
         }
+        
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        )
     }
 }
 
