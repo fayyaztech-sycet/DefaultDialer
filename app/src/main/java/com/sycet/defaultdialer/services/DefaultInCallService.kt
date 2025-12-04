@@ -112,6 +112,16 @@ class DefaultInCallService : InCallService() {
                             Log.d(TAG, "Call disconnected by: $callDisconnectedBy")
                             Log.d(TAG, "Disconnect reason: ${disconnectCause?.reason}")
 
+                            // Launch/Update call screen to show the disconnect error/reason to the user
+                            // This ensures that if a call fails immediately (e.g. Out of Service), the user sees it.
+                            val reason = disconnectCause?.reason ?: "Unknown"
+                            val stateLabel = if (disconnectCause?.code == DisconnectCause.ERROR || disconnectCause?.code == DisconnectCause.BUSY) {
+                                "Error: $reason"
+                            } else {
+                                "Disconnected"
+                            }
+                            launchCallScreen(call, stateLabel)
+
                             call?.unregisterCallback(this)
                             currentCall = null
                         }

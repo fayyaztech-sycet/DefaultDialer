@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -316,7 +317,12 @@ class CallScreenActivity : ComponentActivity() {
                     Call.STATE_DISCONNECTED -> {
                         val disconnectCause = call?.details?.disconnectCause
                         Log.d("CallScreenActivity", "Call disconnected: ${disconnectCause?.reason}")
-                        endCall()
+                        
+                        // Delay closing the activity so the user can see the disconnect reason/snackbar
+                        lifecycleScope.launch {
+                            kotlinx.coroutines.delay(2000)
+                            endCall()
+                        }
                     }
                 }
             }
@@ -384,10 +390,9 @@ class CallScreenActivity : ComponentActivity() {
     
     private fun toggleSpeaker() {
         try {
-            // Request the InCallService to toggle speakerphone. The real audio routing
-            // work happens inside the InCallService's AudioManager for reliability.
+            // Use local robust method to toggle speakerphone
             val newState = !audioManager.isSpeakerphoneOn
-            DefaultInCallService.setSpeaker(newState)
+            setSpeakerphoneOn(newState)
             Log.d("CallScreenActivity", "Requested speaker -> $newState")
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Speaker toggle failed", e)
@@ -542,6 +547,8 @@ fun CallScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var callState by remember { mutableStateOf(initialCallState) }
+    // Display state: only shows important statuses (Dialing, Ringing, Active, Disconnected)
+    var displayState by remember { mutableStateOf(getImportantDisplayState(initialCallState)) }
     var elapsedTime by remember { mutableLongStateOf(0L) }
     var isActive by remember { mutableStateOf(initialCallState.contains("Active", ignoreCase = true)) }
     var isMuted by remember { mutableStateOf(false) }
@@ -565,19 +572,30 @@ fun CallScreen(
                     when (state) {
                         Call.STATE_ACTIVE -> {
                             callState = "Active"
+                            displayState = "Active"
                             isActive = true
                             isRinging = false
                         }
                         Call.STATE_DISCONNECTED -> {
                             val disconnectCause = call?.details?.disconnectCause
                             Log.d("CallScreen", "Disconnected: ${disconnectCause?.reason}, Code: ${disconnectCause?.code}")
-
+                            callState = "Disconnected"
+                            displayState = "Disconnected"
+                            isActive = false
+                            isRinging = false
                             // Close screen for missed calls or any disconnect
                             onEndCall()
                         }
                         Call.STATE_RINGING -> {
+                            callState = "Ringing"
+                            displayState = "Ringing"
                             isRinging = true
                             isActive = false
+                        }
+                        Call.STATE_DIALING -> {
+                            callState = "Dialing"
+                            displayState = "Dialing"
+                            isRinging = false
                         }
                     }
                 }
@@ -598,17 +616,38 @@ fun CallScreen(
         }
     }
 
-    // Show Snackbar on call state change
+    // Handle call state changes - show snackbar for errors/non-important states and close screen
     LaunchedEffect(callState) {
-        val job = launch {
-            snackbarHostState.showSnackbar(
-                message = "Call Status: $callState",
-                duration = SnackbarDuration.Indefinite
-            )
+        val isImportantState = isImportantCallState(callState)
+        
+        if (isImportantState) {
+            // Update display state for important statuses
+            displayState = getImportantDisplayState(callState)
+            // Show snackbar briefly for important states
+            val job = launch {
+                snackbarHostState.showSnackbar(
+                    message = "Call Status: $callState",
+                    duration = SnackbarDuration.Indefinite
+                )
+            }
+            delay(1000)
+            snackbarHostState.currentSnackbarData?.dismiss()
+            job.cancel()
+        } else {
+            // For error/non-important states (e.g., OUT_OF_SERVICE, Error, etc.)
+            // Show snackbar with error message and close the screen
+            Log.d("CallScreen", "Non-important state detected: $callState, showing snackbar and closing")
+            val job = launch {
+                snackbarHostState.showSnackbar(
+                    message = callState,
+                    duration = SnackbarDuration.Indefinite
+                )
+            }
+            delay(2000) // Show error for 2 seconds before closing
+            snackbarHostState.currentSnackbarData?.dismiss()
+            job.cancel()
+            onEndCall()
         }
-        delay(1000)
-        snackbarHostState.currentSnackbarData?.dismiss()
-        job.cancel()
     }
     
     Box(
@@ -668,9 +707,9 @@ fun CallScreen(
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                // Call state
+                // Call state - only show important states
                 Text(
-                    text = callState,
+                    text = displayState,
                     fontSize = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -907,5 +946,50 @@ private fun formatDuration(seconds: Long): String {
         String.format(Locale.US,"%02d:%02d:%02d", hours, minutes, secs)
     } else {
         String.format(Locale.US, "%02d:%02d", minutes, secs)
+    }
+}
+
+/**
+ * Determines if a call state is "important" and should be displayed on the call screen.
+ * Important states: Dialing, Ringing, Incoming, Active, Disconnected, Connecting
+ * Non-important states (errors like OUT_OF_SERVICE) should only show in snackbar and close screen.
+ */
+private fun isImportantCallState(state: String): Boolean {
+    val importantKeywords = listOf(
+        "dialing", "ringing", "incoming", "active", "disconnected", 
+        "connecting", "holding", "held", "unknown"
+    )
+    val lowerState = state.lowercase()
+    
+    // Check if it's an error state
+    if (lowerState.startsWith("error:") || 
+        lowerState.contains("out of service") ||
+        lowerState.contains("out_of_service") ||
+        lowerState.contains("no service") ||
+        lowerState.contains("not registered") ||
+        lowerState.contains("network") ||
+        lowerState.contains("unavailable")) {
+        return false
+    }
+    
+    return importantKeywords.any { lowerState.contains(it) }
+}
+
+/**
+ * Maps a call state to a clean display state for the UI.
+ * Only returns important status labels: Dialing, Ringing, Active, Disconnected, etc.
+ */
+private fun getImportantDisplayState(state: String): String {
+    val lowerState = state.lowercase()
+    
+    return when {
+        lowerState.contains("active") -> "Active"
+        lowerState.contains("dialing") -> "Dialing..."
+        lowerState.contains("ringing") -> "Ringing..."
+        lowerState.contains("incoming") -> "Incoming call..."
+        lowerState.contains("connecting") -> "Connecting..."
+        lowerState.contains("disconnected") -> "Disconnected"
+        lowerState.contains("holding") || lowerState.contains("held") -> "On Hold"
+        else -> "Connecting..." // Default to Connecting for unknown/transitional states
     }
 }
