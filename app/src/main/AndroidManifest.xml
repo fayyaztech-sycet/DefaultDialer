@@ -120,7 +120,8 @@
             android:name=".services.DefaultInCallService"
             tools:targetApi="31"
             android:permission="android.permission.BIND_INCALL_SERVICE"
-            android:exported="true">
+            android:exported="true"
+            android:foregroundServiceType="phoneCall">
             <!-- Advertise whether the in-call service will play ringtone for incoming calls. -->
             <meta-data
                 android:name="android.telecom.IN_CALL_SERVICE_RINGING"

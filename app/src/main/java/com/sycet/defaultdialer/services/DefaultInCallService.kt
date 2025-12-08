@@ -8,6 +8,7 @@ import android.app.Person
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -407,7 +408,11 @@ class DefaultInCallService : InCallService() {
                 .build()
         }
 
-        startForeground(1, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+        } else {
+            startForeground(1, notification)
+        }
     }
 
     private fun showOngoingCallNotification(call: Call) {
@@ -447,7 +452,11 @@ class DefaultInCallService : InCallService() {
                 .build()
         }
 
-        startForeground(1, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+        } else {
+            startForeground(1, notification)
+        }
     }
 
     private fun cancelCallNotification() {

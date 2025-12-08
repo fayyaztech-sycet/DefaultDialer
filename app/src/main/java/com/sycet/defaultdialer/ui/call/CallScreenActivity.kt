@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import android.database.Cursor
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.ContactsContract
 import android.telecom.Call
@@ -33,6 +35,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
@@ -73,6 +77,8 @@ class CallScreenActivity : ComponentActivity() {
     private val canConferenceState = mutableStateOf(false)
     private val canMergeState = mutableStateOf(false)
     private val isOnHoldState = mutableStateOf(false)
+    private val handler = Handler(Looper.getMainLooper())
+    private var showKeypad by mutableStateOf(false)
     
     companion object {
         private var isActivityRunning = false
@@ -149,6 +155,9 @@ class CallScreenActivity : ComponentActivity() {
                         onToggleHold = { toggleHold() },
                         onConference = { onConference() },
                         onMerge = { onMerge() },
+                        onSendDtmf = { digit -> sendDtmf(digit) },
+                        showKeypad = showKeypad,
+                        onToggleKeypad = { showKeypad = !showKeypad },
                         getContactName = { number -> getContactName(number) }
                     )
                 }
@@ -491,6 +500,18 @@ class CallScreenActivity : ComponentActivity() {
         }
     }
     
+    private fun sendDtmf(digit: Char) {
+        try {
+            currentCall?.playDtmfTone(digit)
+            handler.postDelayed({
+                currentCall?.stopDtmfTone()
+            }, 100)
+            Log.d("CallScreenActivity", "Sent DTMF: $digit")
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "DTMF failed", e)
+        }
+    }
+    
     private fun getContactName(phoneNumber: String): String? {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) 
             != PackageManager.PERMISSION_GRANTED) {
@@ -625,6 +646,70 @@ class CallScreenActivity : ComponentActivity() {
     }
 }
 
+private fun formatDuration(seconds: Long): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    
+    return if (hours > 0) {
+        String.format(java.util.Locale.US,"%02d:%02d:%02d", hours, minutes, secs)
+    } else {
+        String.format(java.util.Locale.US, "%02d:%02d", minutes, secs)
+    }
+}
+
+@Composable
+fun Keypad(onSendDtmf: (Char) -> Unit, onClose: () -> Unit) {
+    val keypadButtons = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("*", "0", "#")
+    )
+    
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Close button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Close Keypad",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+        
+        keypadButtons.forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                row.forEach { digit ->
+                    FloatingActionButton(
+                        onClick = { onSendDtmf(digit[0]) },
+                        modifier = Modifier.size(64.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = digit,
+                            fontSize = 24.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
 @Composable
 fun CallScreen(
     phoneNumber: String,
@@ -641,6 +726,9 @@ fun CallScreen(
     canMerge: Boolean = false,
     onConference: () -> Unit = {},
     onMerge: () -> Unit = {},
+    onSendDtmf: (Char) -> Unit = {},
+    showKeypad: Boolean,
+    onToggleKeypad: () -> Unit,
     getContactName: (String) -> String?
 ) {
     var callState by remember { mutableStateOf(initialCallState) }
@@ -899,6 +987,34 @@ fun CallScreen(
                             )
                         }
                         
+                        // Keypad button
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = onToggleKeypad,
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .background(
+                                        color = if (showKeypad) MaterialTheme.colorScheme.primary 
+                                               else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Dialpad,
+                                    contentDescription = "Keypad",
+                                    tint = if (showKeypad) Color.White 
+                                          else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Keypad",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
                         // Conference button (if available)
                         if (isActive && canConference) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1002,20 +1118,16 @@ fun CallScreen(
                             tint = Color.White
                         )
                     }
-                }
-            }
+                    
+                    // Keypad
+                    if (showKeypad) {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Keypad(onSendDtmf = onSendDtmf, onClose = onToggleKeypad)
+                    }
         }
     }
 }
-
-private fun formatDuration(seconds: Long): String {
-    val hours = seconds / 3600
-    val minutes = (seconds % 3600) / 60
-    val secs = seconds % 60
-    
-    return if (hours > 0) {
-        String.format(Locale.US,"%02d:%02d:%02d", hours, minutes, secs)
-    } else {
-        String.format(Locale.US, "%02d:%02d", minutes, secs)
-    }
 }
+}
+
+
