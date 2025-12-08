@@ -67,6 +67,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -95,6 +99,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import android.content.Intent
 
 /** Utility to resolve contact name */
 // Simple in-memory cache for resolved contact names to avoid repeated content provider hits
@@ -188,26 +193,37 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
     ) {
         ListItem(
                 leadingContent = {
-                    Icon(
-                            imageVector =
-                                    when (record.type) {
-                                        CallLog.Calls.OUTGOING_TYPE ->
-                                                Icons.AutoMirrored.Filled.CallMade
-                                        CallLog.Calls.INCOMING_TYPE ->
-                                                Icons.AutoMirrored.Filled.CallReceived
-                                        CallLog.Calls.MISSED_TYPE ->
-                                                Icons.AutoMirrored.Filled.CallMissed
-                                        else -> Icons.Default.Call
-                                    },
-                            contentDescription = "Call Type",
-                            tint =
-                                    when (record.type) {
-                                        CallLog.Calls.MISSED_TYPE -> Color(0xFFD32F2F) // red600
-                                        CallLog.Calls.OUTGOING_TYPE -> Color(0xFF388E3C) // green600
-                                        else -> MaterialTheme.colorScheme.primary // blue
-                                    },
-                            modifier = Modifier.size(24.dp)
-                    )
+                    // small avatar with initials and a call-type badge
+                    val initials = (record.name ?: record.number).takeIf { it.isNotBlank() }
+                            ?.split(" ")
+                            ?.take(2)
+                            ?.mapNotNull { it.firstOrNull()?.uppercaseChar() }
+                            ?.joinToString("")
+                            ?: "?"
+
+                    val callIcon = when (record.type) {
+                        CallLog.Calls.OUTGOING_TYPE -> Icons.AutoMirrored.Filled.CallMade
+                        CallLog.Calls.INCOMING_TYPE -> Icons.AutoMirrored.Filled.CallReceived
+                        CallLog.Calls.MISSED_TYPE -> Icons.AutoMirrored.Filled.CallMissed
+                        else -> Icons.Default.Call
+                    }
+                    val callTint = when (record.type) {
+                        CallLog.Calls.MISSED_TYPE -> Color(0xFFD32F2F) // red600
+                        CallLog.Calls.OUTGOING_TYPE -> Color(0xFF388E3C) // green600
+                        else -> MaterialTheme.colorScheme.primary // blue
+                    }
+
+                    Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                            Text(initials, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                        Box(modifier = Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
+                            Icon(callIcon, contentDescription = null, tint = callTint, modifier = Modifier.size(12.dp))
+                        }
+                    }
                 },
                 headlineContent = {
                     Text(
@@ -268,11 +284,32 @@ fun CallHistoryItem(record: CallRecord, hasWritePermission: Boolean, onDelete: (
                                 expanded = menuExpanded.value,
                                 onDismissRequest = { menuExpanded.value = false }
                         ) {
-                            DropdownMenuItem(
-                                    text = { Text("View Details") },
-                                    onClick = { /* TODO */}
-                            )
-                            DropdownMenuItem(text = { Text("Add note") }, onClick = { /* TODO */})
+                            DropdownMenuItem(text = { Text("Copy number") }, onClick = {
+                                menuExpanded.value = false
+                                try {
+                                    val clipboard = localContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    val clip = android.content.ClipData.newPlainText("phone", record.number)
+                                    clipboard.setPrimaryClip(clip)
+                                    android.widget.Toast.makeText(localContext, "Number copied", android.widget.Toast.LENGTH_SHORT).show()
+                                } catch (_: Exception) {
+                                }
+                            })
+
+                            DropdownMenuItem(text = { Text("Add to contacts") }, onClick = {
+                                menuExpanded.value = false
+                                try {
+                                    val insert = Intent(Intent.ACTION_INSERT).apply {
+                                        type = ContactsContract.Contacts.CONTENT_TYPE
+                                        putExtra(ContactsContract.Intents.Insert.PHONE, record.number)
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    if (insert.resolveActivity(localContext.packageManager) != null) localContext.startActivity(insert)
+                                } catch (_: Exception) {
+                                }
+                            })
+
+                            DropdownMenuItem(text = { Text("View Details") }, onClick = { /* TODO */ })
+                            DropdownMenuItem(text = { Text("Add note") }, onClick = { /* TODO */ })
                         }
 
                         if (showInvalidNumberDialog.value) {

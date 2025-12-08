@@ -26,7 +26,8 @@
     <!-- Android 13+ (API 33) notifications runtime permission — add to manifest so it can be
     requested at runtime -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"
+        tools:ignore="FullScreenIntentPolicy" />
 
     <!-- This app implements dialer functionality. For development and emulator
             testing we intentionally allow installs on devices without telephony
@@ -51,7 +52,6 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:theme="@style/Theme.DefaultDialer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -161,7 +161,7 @@
             android:name=".services.IncomingCallReceiver"
             android:enabled="true"
             android:exported="false">
-            <!-- Lowered priority to avoid conflicting with OEM dialers. PHONE_STATE broadcast
+            <!-- Lowered priority to avoid conflicting with OEM dealers. PHONE_STATE broadcast
                  is unreliable on Android 12+ and it's recommended to move receiver logic into
                  DefaultInCallService.onCallAdded() instead of relying on the broadcast. -->
             <intent-filter android:priority="100">
