@@ -1,5 +1,11 @@
 package com.sycet.defaultdialer.services
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Person
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
@@ -10,6 +16,7 @@ import android.telecom.Call
 import android.telecom.DisconnectCause
 import android.telecom.InCallService
 import android.telecom.TelecomManager
+import androidx.core.app.NotificationCompat
 import android.util.Log
 import com.sycet.defaultdialer.ui.call.CallScreenActivity
 
@@ -243,6 +250,27 @@ class DefaultInCallService : InCallService() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        createNotificationChannel()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "call_channel",
+                "Call Notifications",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications for incoming and ongoing calls"
+            }
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
     private val callCallback =
             object : Call.Callback() {
                 override fun onStateChanged(call: Call?, state: Int) {
@@ -256,10 +284,12 @@ class DefaultInCallService : InCallService() {
                         Call.STATE_RINGING -> {
                             Log.d(TAG, "Call State: RINGING")
                             launchCallScreen(call, "Incoming call...")
+                            call?.let { showIncomingCallNotification(it) }
                         }
                         Call.STATE_ACTIVE -> {
                             Log.d(TAG, "Call State: ACTIVE")
                             updateCallScreen(call, "Active")
+                            call?.let { showOngoingCallNotification(it) }
                         }
                         Call.STATE_DISCONNECTED -> {
                             val disconnectCause = call?.details?.disconnectCause
@@ -290,6 +320,7 @@ class DefaultInCallService : InCallService() {
                                 "Disconnected"
                             }
                             launchCallScreen(call, stateLabel)
+                            cancelCallNotification()
 
                             call?.unregisterCallback(this)
                             currentCall = null
@@ -328,6 +359,101 @@ class DefaultInCallService : InCallService() {
             audioManager = null
         } catch (_: Exception) {}
         Log.d(TAG, "Call removed")
+        cancelCallNotification()
+    }
+
+    private fun showIncomingCallNotification(call: Call) {
+        val fullScreenIntent = Intent(this, CallScreenActivity::class.java).apply {
+            putExtra("PHONE_NUMBER", call.details.handle?.schemeSpecificPart ?: "Unknown")
+            putExtra("CALL_STATE", "Incoming")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val fullScreenPendingIntent = PendingIntent.getActivity(this, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val acceptIntent = Intent(this, CallActionReceiver::class.java).apply {
+            action = "ACCEPT_CALL"
+        }
+        val acceptPendingIntent = PendingIntent.getBroadcast(this, 1, acceptIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val rejectIntent = Intent(this, CallActionReceiver::class.java).apply {
+            action = "REJECT_CALL"
+        }
+        val rejectPendingIntent = PendingIntent.getBroadcast(this, 2, rejectIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val caller = Person.Builder()
+            .setName(call.details.handle?.schemeSpecificPart ?: "Unknown")
+            .build()
+
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Notification.Builder(this, "call_channel")
+                .setSmallIcon(android.R.drawable.sym_call_incoming)
+                .setStyle(Notification.CallStyle.forIncomingCall(caller, rejectPendingIntent, acceptPendingIntent))
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .setOngoing(true)
+                .setVibrate(longArrayOf(0, 1000, 500, 1000))
+                .build()
+        } else {
+            NotificationCompat.Builder(this, "call_channel")
+                .setSmallIcon(android.R.drawable.sym_call_incoming)
+                .setContentTitle("Incoming Call")
+                .setContentText(call.details.handle?.schemeSpecificPart ?: "Unknown")
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Reject", rejectPendingIntent)
+                .addAction(android.R.drawable.ic_menu_call, "Accept", acceptPendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .setOngoing(true)
+                .setVibrate(longArrayOf(0, 1000, 500, 1000))
+                .build()
+        }
+
+        startForeground(1, notification)
+    }
+
+    private fun showOngoingCallNotification(call: Call) {
+        val returnIntent = Intent(this, CallScreenActivity::class.java).apply {
+            putExtra("PHONE_NUMBER", call.details.handle?.schemeSpecificPart ?: "Unknown")
+            putExtra("CALL_STATE", "Active")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val returnPendingIntent = PendingIntent.getActivity(this, 3, returnIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val hangupIntent = Intent(this, CallActionReceiver::class.java).apply {
+            action = "HANGUP_CALL"
+        }
+        val hangupPendingIntent = PendingIntent.getBroadcast(this, 4, hangupIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val caller = Person.Builder()
+            .setName(call.details.handle?.schemeSpecificPart ?: "Unknown")
+            .build()
+
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Notification.Builder(this, "call_channel")
+                .setSmallIcon(android.R.drawable.sym_call_outgoing)
+                .setStyle(Notification.CallStyle.forOngoingCall(caller, hangupPendingIntent))
+                .setContentIntent(returnPendingIntent)
+                .setOngoing(true)
+                .build()
+        } else {
+            NotificationCompat.Builder(this, "call_channel")
+                .setSmallIcon(android.R.drawable.sym_call_outgoing)
+                .setContentTitle("Ongoing Call")
+                .setContentText(call.details.handle?.schemeSpecificPart ?: "Unknown")
+                .setContentIntent(returnPendingIntent)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Hangup", hangupPendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setOngoing(true)
+                .build()
+        }
+
+        startForeground(1, notification)
+    }
+
+    private fun cancelCallNotification() {
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.cancel(1)
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
     }
 
     private fun launchCallScreen(call: Call?, callState: String) {
