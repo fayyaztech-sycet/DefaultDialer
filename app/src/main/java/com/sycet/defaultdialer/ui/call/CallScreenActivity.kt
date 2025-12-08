@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FloatingActionButton
@@ -71,6 +72,7 @@ class CallScreenActivity : ComponentActivity() {
     private val callStateState = mutableStateOf("Unknown")
     private val canConferenceState = mutableStateOf(false)
     private val canMergeState = mutableStateOf(false)
+    private val isOnHoldState = mutableStateOf(false)
     
     companion object {
         private var isActivityRunning = false
@@ -143,6 +145,8 @@ class CallScreenActivity : ComponentActivity() {
                         onEndCall = { endCall() },
                         onToggleMute = { toggleMute() },
                         onToggleSpeaker = { toggleSpeaker() },
+                        isOnHold = isOnHoldState.value,
+                        onToggleHold = { toggleHold() },
                         onConference = { onConference() },
                         onMerge = { onMerge() },
                         getContactName = { number -> getContactName(number) }
@@ -362,6 +366,10 @@ class CallScreenActivity : ComponentActivity() {
                         refreshPhoneNumberFromCallOrIntent()
                         // Acquire proximity wake lock for active call (earpiece mode)
                         acquireProximityWakeLock()
+                        isOnHoldState.value = false
+                    }
+                    Call.STATE_HOLDING -> {
+                        isOnHoldState.value = true
                     }
                     Call.STATE_DISCONNECTED -> {
                         val disconnectCause = call?.details?.disconnectCause
@@ -466,6 +474,20 @@ class CallScreenActivity : ComponentActivity() {
             Log.d("CallScreenActivity", "Requested speaker -> $newState (actual=${audioManager.isSpeakerphoneOn})")
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Speaker toggle failed", e)
+        }
+    }
+    
+    private fun toggleHold() {
+        try {
+            if (isOnHoldState.value) {
+                currentCall?.unhold()
+                Log.d("CallScreenActivity", "Requested unhold")
+            } else {
+                currentCall?.hold()
+                Log.d("CallScreenActivity", "Requested hold")
+            }
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Hold toggle failed", e)
         }
     }
     
@@ -613,6 +635,8 @@ fun CallScreen(
     onEndCall: () -> Unit,
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
+    isOnHold: Boolean = false,
+    onToggleHold: () -> Unit = {},
     canConference: Boolean = false,
     canMerge: Boolean = false,
     onConference: () -> Unit = {},
@@ -842,6 +866,34 @@ fun CallScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = if (isMuted) "Unmute" else "Mute",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        // Hold button
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = onToggleHold,
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .background(
+                                        color = if (isOnHold) MaterialTheme.colorScheme.primary 
+                                               else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Pause,
+                                    contentDescription = "Hold",
+                                    tint = if (isOnHold) Color.White 
+                                          else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (isOnHold) "Resume" else "Hold",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
