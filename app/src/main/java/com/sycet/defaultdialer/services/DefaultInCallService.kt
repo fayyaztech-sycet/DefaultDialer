@@ -54,6 +54,30 @@ class DefaultInCallService : InCallService() {
                     }
                 }
 
+        /**
+         * Get the number of active calls
+         */
+        fun getActiveCallCount(): Int {
+            return try {
+                instance?.calls?.size ?: 0
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to get active call count: ${e.message}")
+                0
+            }
+        }
+
+        /**
+         * Get all active calls
+         */
+        fun getAllCalls(): List<Call> {
+            return try {
+                instance?.calls?.toList() ?: emptyList()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to get all calls: ${e.message}")
+                emptyList()
+            }
+        }
+
         fun muteCall(isMuted: Boolean) {
             try {
                 // Prefer the Telecom API to mute the active Call — this ensures proper
@@ -390,7 +414,8 @@ class DefaultInCallService : InCallService() {
             showIncomingCallNotification(call)
         }
 
-        Log.d(TAG, "Call added")
+        val callCount = getCalls().size
+        Log.d(TAG, "Call added. Total active calls: $callCount")
     }
 
     override fun onCallRemoved(call: Call?) {
@@ -405,7 +430,10 @@ class DefaultInCallService : InCallService() {
         try {
             audioManager = null
         } catch (_: Exception) {}
-        Log.d(TAG, "Call removed")
+        
+        val callCount = getCalls().size
+        Log.d(TAG, "Call removed. Total active calls: $callCount")
+        
         cancelCallNotification()
     }
 
