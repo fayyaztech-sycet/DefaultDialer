@@ -294,6 +294,10 @@ class DefaultInCallService : InCallService() {
                 Log.d(TAG, "abandonAudioFocus - released")
             }
         }
+
+        fun cancelNotification() {
+            instance?.cancelCallNotification()
+        }
     }
 
     override fun onCreate() {
@@ -301,6 +305,12 @@ class DefaultInCallService : InCallService() {
         instance = this
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         createNotificationChannel()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cancelCallNotification()
+        instance = null
     }
 
     private fun createNotificationChannel() {
