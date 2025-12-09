@@ -32,6 +32,8 @@ class DefaultInCallService : InCallService() {
 
     companion object {
         const val TAG = "DefaultInCallService"
+        const val ACTION_AUDIO_STATE_CHANGED = "com.sycet.defaultdialer.ACTION_AUDIO_STATE_CHANGED"
+        const val EXTRA_AUDIO_STATE = "EXTRA_AUDIO_STATE"
         var currentCall: Call? = null
         var callDisconnectedBy: String = "Unknown"
         // Keep reference to the service instance for audio routing
@@ -298,6 +300,10 @@ class DefaultInCallService : InCallService() {
         fun cancelNotification() {
             instance?.cancelCallNotification()
         }
+
+        fun setAudioRoute(route: Int) {
+            instance?.setAudioRoute(route)
+        }
     }
 
     override fun onCreate() {
@@ -445,6 +451,18 @@ class DefaultInCallService : InCallService() {
         Log.d(TAG, "Call removed. Total active calls: $callCount")
         
         cancelCallNotification()
+    }
+
+    override fun onCallAudioStateChanged(audioState: android.telecom.CallAudioState?) {
+        super.onCallAudioStateChanged(audioState)
+        audioState?.let {
+            val intent = Intent(ACTION_AUDIO_STATE_CHANGED).apply {
+                putExtra(EXTRA_AUDIO_STATE, it)
+                setPackage(packageName) // Restrict to own package for security
+            }
+            sendBroadcast(intent)
+            Log.d(TAG, "onCallAudioStateChanged: $it")
+        }
     }
 
     private fun showIncomingCallNotification(call: Call) {

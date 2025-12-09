@@ -15,6 +15,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.ContactsContract
 import android.telecom.Call
+import android.telecom.CallAudioState
 import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BluetoothAudio
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Close
@@ -40,7 +42,10 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,8 +82,24 @@ class CallScreenActivity : ComponentActivity() {
     private val canMergeState = mutableStateOf(false)
     private val isOnHoldState = mutableStateOf(false)
     private val callCountState = mutableStateOf(1)
+    private val audioState = mutableStateOf<CallAudioState?>(null)
     private val handler = Handler(Looper.getMainLooper())
     private var showKeypad by mutableStateOf(false)
+
+    private val audioStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == DefaultInCallService.ACTION_AUDIO_STATE_CHANGED) {
+                val state = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(DefaultInCallService.EXTRA_AUDIO_STATE, CallAudioState::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(DefaultInCallService.EXTRA_AUDIO_STATE)
+                }
+                audioState.value = state
+                Log.d("CallScreenActivity", "Received audio state: $state")
+            }
+        }
+    }
 
     companion object {
         private var isActivityRunning = false
@@ -141,6 +162,14 @@ class CallScreenActivity : ComponentActivity() {
             acquireProximityWakeLock()
         }
 
+        // Register audio state receiver
+        val filter = android.content.IntentFilter(DefaultInCallService.ACTION_AUDIO_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(audioStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(audioStateReceiver, filter)
+        }
+
         setContent {
             DefaultDialerTheme {
                 Surface(
@@ -158,7 +187,8 @@ class CallScreenActivity : ComponentActivity() {
                             onRejectCall = { rejectCall() },
                             onEndCall = { endCall() },
                             onToggleMute = { toggleMute() },
-                            onToggleSpeaker = { toggleSpeaker() },
+                            onSetAudioRoute = { route -> setAudioRoute(route) },
+                            audioState = audioState.value,
                             isOnHold = isOnHoldState.value,
                             onToggleHold = { toggleHold() },
                             onConference = { onConference() },
@@ -618,6 +648,24 @@ class CallScreenActivity : ComponentActivity() {
         }
     }
 
+    private fun setAudioRoute(route: Int) {
+        try {
+            Log.d("CallScreenActivity", "Setting audio route to: $route")
+            DefaultInCallService.setAudioRoute(route)
+            
+            // Manage proximity wake lock based on route
+            if (route == CallAudioState.ROUTE_SPEAKER) {
+                // Speaker ON - release proximity lock to keep screen on
+                releaseProximityWakeLock()
+            } else {
+                // Earpiece/Bluetooth - acquire proximity lock to turn screen off near face
+                acquireProximityWakeLock()
+            }
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to set audio route", e)
+        }
+    }
+
     private fun toggleHold() {
         try {
             if (isOnHoldState.value) {
@@ -736,6 +784,11 @@ class CallScreenActivity : ComponentActivity() {
         isFinishing = false
         Log.d("CallScreenActivity", "Activity destroyed and cleaned up")
         super.onDestroy()
+        try {
+            unregisterReceiver(audioStateReceiver)
+        } catch (e: Exception) {
+            Log.w("CallScreenActivity", "Failed to unregister audio receiver", e)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -907,7 +960,8 @@ fun CallScreen(
         onRejectCall: () -> Unit,
         onEndCall: () -> Unit,
         onToggleMute: () -> Unit,
-        onToggleSpeaker: () -> Unit,
+        onSetAudioRoute: (Int) -> Unit,
+        audioState: CallAudioState?,
         isOnHold: Boolean = false,
         onToggleHold: () -> Unit = {},
         canConference: Boolean = false,
@@ -927,7 +981,15 @@ fun CallScreen(
         mutableStateOf(initialCallState.contains("Active", ignoreCase = true))
     }
     var isMuted by remember { mutableStateOf(false) }
-    var isSpeakerOn by remember { mutableStateOf(false) }
+    var showAudioRouteMenu by remember { mutableStateOf(false) }
+    
+    // Determine current audio route and available routes
+    val currentRoute = audioState?.route ?: CallAudioState.ROUTE_EARPIECE
+    val supportedRoutes = audioState?.supportedRouteMask ?: (CallAudioState.ROUTE_EARPIECE or CallAudioState.ROUTE_SPEAKER)
+    
+    val isSpeakerOn = currentRoute == CallAudioState.ROUTE_SPEAKER
+    val isBluetoothOn = currentRoute == CallAudioState.ROUTE_BLUETOOTH
+    
     var isRinging by remember {
         mutableStateOf(
                 initialCallState.contains("Incoming", ignoreCase = true) ||
@@ -1301,40 +1363,92 @@ fun CallScreen(
                             }
                         }
 
-                        // Speaker button
+                        // Audio Route button (Speaker/Bluetooth)
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            IconButton(
-                                    onClick = {
-                                        isSpeakerOn = !isSpeakerOn
-                                        onToggleSpeaker()
-                                    },
-                                    modifier =
-                                            Modifier.size(64.dp)
-                                                    .background(
-                                                            color =
-                                                                    if (isSpeakerOn)
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .primary
-                                                                    else
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .surfaceVariant,
-                                                            shape = CircleShape
-                                                    )
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.VolumeUp,
-                                        contentDescription = "Speaker",
-                                        tint =
-                                                if (isSpeakerOn) Color.White
-                                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(28.dp)
-                                )
+                            Box {
+                                IconButton(
+                                        onClick = {
+                                            // If multiple routes available (e.g. BT connected), show menu
+                                            // Otherwise just toggle speaker
+                                            val hasBluetooth = (supportedRoutes and CallAudioState.ROUTE_BLUETOOTH) != 0
+                                            if (hasBluetooth) {
+                                                showAudioRouteMenu = true
+                                            } else {
+                                                // Simple toggle between Speaker and Earpiece/Wired
+                                                val newRoute = if (isSpeakerOn) CallAudioState.ROUTE_WIRED_OR_EARPIECE else CallAudioState.ROUTE_SPEAKER
+                                                onSetAudioRoute(newRoute)
+                                            }
+                                        },
+                                        modifier =
+                                                Modifier.size(64.dp)
+                                                        .background(
+                                                                color =
+                                                                        if (isSpeakerOn || isBluetoothOn)
+                                                                                MaterialTheme
+                                                                                        .colorScheme
+                                                                                        .primary
+                                                                        else
+                                                                                MaterialTheme
+                                                                                        .colorScheme
+                                                                                        .surfaceVariant,
+                                                                shape = CircleShape
+                                                        )
+                                ) {
+                                    Icon(
+                                            imageVector = if (isBluetoothOn) Icons.Filled.BluetoothAudio else Icons.Default.VolumeUp,
+                                            contentDescription = "Audio Route",
+                                            tint =
+                                                    if (isSpeakerOn || isBluetoothOn) Color.White
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                
+                                DropdownMenu(
+                                    expanded = showAudioRouteMenu,
+                                    onDismissRequest = { showAudioRouteMenu = false }
+                                ) {
+                                    if ((supportedRoutes and CallAudioState.ROUTE_BLUETOOTH) != 0) {
+                                        DropdownMenuItem(
+                                            text = { Text("Bluetooth") },
+                                            onClick = {
+                                                onSetAudioRoute(CallAudioState.ROUTE_BLUETOOTH)
+                                                showAudioRouteMenu = false
+                                            },
+                                            leadingIcon = {
+                                                Icon(Icons.Filled.BluetoothAudio, contentDescription = null)
+                                            }
+                                        )
+                                    }
+                                    if ((supportedRoutes and CallAudioState.ROUTE_SPEAKER) != 0) {
+                                        DropdownMenuItem(
+                                            text = { Text("Speaker") },
+                                            onClick = {
+                                                onSetAudioRoute(CallAudioState.ROUTE_SPEAKER)
+                                                showAudioRouteMenu = false
+                                            },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.VolumeUp, contentDescription = null)
+                                            }
+                                        )
+                                    }
+                                    if ((supportedRoutes and CallAudioState.ROUTE_EARPIECE) != 0 || (supportedRoutes and CallAudioState.ROUTE_WIRED_HEADSET) != 0) {
+                                        DropdownMenuItem(
+                                            text = { Text("Phone") },
+                                            onClick = {
+                                                onSetAudioRoute(CallAudioState.ROUTE_WIRED_OR_EARPIECE)
+                                                showAudioRouteMenu = false
+                                            },
+                                            leadingIcon = {
+                                                Icon(Icons.Filled.Phone, contentDescription = null)
+                                            }
+                                        )
+                                    }
+                                }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                    text = "Speaker",
+                                    text = if (isBluetoothOn) "Bluetooth" else if (isSpeakerOn) "Speaker" else "Audio",
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
