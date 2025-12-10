@@ -1028,6 +1028,9 @@ private fun formatDuration(seconds: Long): String {
 
 @Composable
 fun Keypad(onSendDtmf: (Char) -> Unit, onClose: () -> Unit) {
+    // State to track pressed digits
+    var pressedDigits by remember { mutableStateOf("") }
+    
     val keypadButtons =
             listOf(
                     listOf("1", "2", "3"),
@@ -1036,42 +1039,120 @@ fun Keypad(onSendDtmf: (Char) -> Unit, onClose: () -> Unit) {
                     listOf("*", "0", "#")
             )
 
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Close button
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            IconButton(onClick = onClose) {
-                Icon(
+    // Floating card overlay
+    androidx.compose.material3.Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = androidx.compose.material3.CardDefaults.cardElevation(
+            defaultElevation = 8.dp
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Header with close button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Keypad",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(onClick = onClose) {
+                    Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "Close Keypad",
-                        tint = MaterialTheme.colorScheme.onSurface
-                )
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-        }
 
-        keypadButtons.forEach { row ->
-            Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Display showing pressed digits
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.CenterStart
             ) {
-                row.forEach { digit ->
-                    FloatingActionButton(
-                            onClick = { onSendDtmf(digit[0]) },
-                            modifier = Modifier.size(64.dp),
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                                text = digit,
-                                fontSize = 24.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (pressedDigits.isEmpty()) "Enter digits..." else pressedDigits,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (pressedDigits.isEmpty())
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        else
+                            MaterialTheme.colorScheme.onSurface
+                    )
+                    // Clear button
+                    if (pressedDigits.isNotEmpty()) {
+                        IconButton(
+                            onClick = { pressedDigits = "" },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Keypad buttons
+            keypadButtons.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    row.forEach { digit ->
+                        FloatingActionButton(
+                            onClick = {
+                                pressedDigits += digit
+                                onSendDtmf(digit[0])
+                            },
+                            modifier = Modifier.size(64.dp),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = digit,
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
     }
 }
+
 
 @Composable
 fun CallScreen(
@@ -1637,13 +1718,19 @@ fun CallScreen(
                                 tint = Color.White
                         )
                     }
-
-                    // Keypad
-                    if (showKeypad) {
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Keypad(onSendDtmf = onSendDtmf, onClose = onToggleKeypad)
-                    }
                 }
+            }
+        }
+        
+        // Floating keypad overlay
+        if (showKeypad) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f)), // Semi-transparent background
+                contentAlignment = Alignment.Center
+            ) {
+                Keypad(onSendDtmf = onSendDtmf, onClose = onToggleKeypad)
             }
         }
     }
