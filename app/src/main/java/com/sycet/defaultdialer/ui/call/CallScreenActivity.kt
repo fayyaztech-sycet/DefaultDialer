@@ -1188,7 +1188,7 @@ fun CallScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(top = 64.dp)
             ) {
-                // Contact avatar
+                // Contact avatar with initial letter
                 Box(
                         modifier =
                                 Modifier.size(120.dp)
@@ -1198,55 +1198,66 @@ fun CallScreen(
                                         ),
                         contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "Contact",
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    // Show initial letter of contact name or "?" if unknown
+                    val initial = displayName.firstOrNull()?.uppercase() ?: "?"
+                    if (initial != "?") {
+                        Text(
+                                text = initial,
+                                style = MaterialTheme.typography.displayLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    } else {
+                        Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = "Contact",
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Contact name (or number if no contact) — large
+                // Contact name - Material 3 Headline style
                 Text(
                         text = displayName,
-                        fontSize = 32.sp,
+                        style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                 )
 
-                // Always show the phone number (compulsory requirement).
-                // If displayName already equals the number, this will duplicate; that's acceptable
-                // to guarantee the number is visible. Use a smaller, secondary-style text.
+                // Phone number - Body style
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                         text = resolvedNumber,
-                        fontSize = 14.sp,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Call state
+                // Call state - Accent color with label style
                 Text(
                         text = callState,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.secondary  // Accent color
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Call duration
+                // Call duration - Title style
                 if (isActive) {
                     Text(
                             text = formatDuration(elapsedTime),
-                            fontSize = 24.sp,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
+
 
             // Bottom section - Call controls
             Column(
