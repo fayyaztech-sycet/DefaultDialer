@@ -80,6 +80,7 @@ class CallScreenActivity : ComponentActivity() {
     private val callStateState = mutableStateOf("Unknown")
     private val canConferenceState = mutableStateOf(false)
     private val canMergeState = mutableStateOf(false)
+    private val canSwapState = mutableStateOf(false)
     private val isOnHoldState = mutableStateOf(false)
     private val callCountState = mutableStateOf(1)
     private val audioState = mutableStateOf<CallAudioState?>(null)
@@ -182,6 +183,7 @@ class CallScreenActivity : ComponentActivity() {
                             call = currentCall,
                             canConference = canConferenceState.value,
                             canMerge = canMergeState.value,
+                            canSwap = canSwapState.value,
                             callCount = callCountState.value,
                             onAnswerCall = { answerCall() },
                             onRejectCall = { rejectCall() },
@@ -193,6 +195,7 @@ class CallScreenActivity : ComponentActivity() {
                             onToggleHold = { toggleHold() },
                             onConference = { onConference() },
                             onMerge = { onMerge() },
+                            onSwapCalls = { onSwapCalls() },
                             onAddCall = { onAddCall() },
                             onSendDtmf = { digit -> sendDtmf(digit) },
                             showKeypad = showKeypad,
@@ -729,20 +732,101 @@ class CallScreenActivity : ComponentActivity() {
                 val activeCallCount = DefaultInCallService.getActiveCallCount()
                 callCountState.value = maxOf(activeCallCount, 1)
 
-                // Show merge option if there are 2+ calls
-                canMergeState.value = activeCallCount >= 2
+                // Check if merge is actually available based on proper conditions
+                canMergeState.value = canMergeCalls()
+                
+                // Check if swap is available
+                canSwapState.value = canSwapCalls()
 
                 Log.d(
                         "CallScreenActivity",
-                        "Active calls: $activeCallCount, canMerge: ${canMergeState.value}"
+                        "Active calls: $activeCallCount, canMerge: ${canMergeState.value}, canSwap: ${canSwapState.value}"
                 )
             } catch (e: Exception) {
                 Log.w("CallScreenActivity", "Failed to get call count: ${e.message}")
                 callCountState.value = 1
                 canMergeState.value = false
+                canSwapState.value = false
             }
         }
     }
+
+    /**
+     * Validates all conditions required for merging calls:
+     * 1. There must be exactly 2 calls
+     * 2. One call must be STATE_ACTIVE and the other STATE_HOLDING
+     * 3. The active call must have CAPABILITY_MERGE_CONFERENCE
+     */
+    private fun canMergeCalls(): Boolean {
+        try {
+            val calls = DefaultInCallService.getAllCalls()
+            
+            // Condition 1: Exactly 2 calls
+            if (calls.size != 2) {
+                Log.d("CallScreenActivity", "canMergeCalls: Call count is ${calls.size}, need exactly 2")
+                return false
+            }
+            
+            // Condition 2 & 3: Find active and holding calls, check capability
+            var activeCall: Call? = null
+            var holdingCall: Call? = null
+            
+            for (call in calls) {
+                when (call.state) {
+                    Call.STATE_ACTIVE -> activeCall = call
+                    Call.STATE_HOLDING -> holdingCall = call
+                }
+            }
+            
+            // Must have exactly one active and one holding call
+            if (activeCall == null || holdingCall == null) {
+                Log.d(
+                    "CallScreenActivity",
+                    "canMergeCalls: Missing required states - active: ${activeCall != null}, holding: ${holdingCall != null}"
+                )
+                return false
+            }
+            
+            // Active call must have merge capability (0x00000004)
+            val hasMergeCapability = activeCall.details.can(Call.Details.CAPABILITY_MERGE_CONFERENCE)
+            Log.d(
+                "CallScreenActivity",
+                "canMergeCalls: Active call merge capability: $hasMergeCapability"
+            )
+            
+            return hasMergeCapability
+        } catch (e: Exception) {
+            Log.w("CallScreenActivity", "canMergeCalls failed: ${e.message}", e)
+            return false
+        }
+    }
+
+    /**
+     * Validates conditions for swapping calls:
+     * 1. At least two calls exist
+     * 2. At least one call is STATE_HOLDING
+     */
+    private fun canSwapCalls(): Boolean {
+        try {
+            val calls = DefaultInCallService.getAllCalls()
+            
+            // Condition 1: At least 2 calls
+            if (calls.size < 2) {
+                Log.d("CallScreenActivity", "canSwapCalls: Only ${calls.size} call(s), need at least 2")
+                return false
+            }
+            
+            // Condition 2: At least one holding call
+            val hasHoldingCall = calls.any { it.state == Call.STATE_HOLDING }
+            Log.d("CallScreenActivity", "canSwapCalls: Has holding call: $hasHoldingCall")
+            
+            return hasHoldingCall
+        } catch (e: Exception) {
+            Log.w("CallScreenActivity", "canSwapCalls failed: ${e.message}", e)
+            return false
+        }
+    }
+
 
     /**
      * Ensures phoneNumberState is populated. Prefer the number from the active Call's handle
@@ -847,34 +931,72 @@ class CallScreenActivity : ComponentActivity() {
     }
 
     private fun onMerge() {
-        Log.d("CallScreenActivity", "Merge action requested — canMerge=${canMergeState.value}")
-
-        if (!canMergeState.value) {
-            Log.d("CallScreenActivity", "Merge not available for this call")
+        Log.d("CallScreenActivity", "Merge action requested")
+        
+        // Validate merge conditions before attempting
+        if (!canMergeCalls()) {
+            Log.d("CallScreenActivity", "Merge conditions not met")
             return
         }
-
+        
         try {
-            // Get all active calls and attempt to conference them
             val calls = DefaultInCallService.getAllCalls()
-            if (calls.size >= 2) {
-                // Conference the calls together
-                val firstCall = calls[0]
-                val secondCall = calls[1]
-
-                Log.d("CallScreenActivity", "Attempting to conference ${calls.size} calls")
-
-                // Use the conference method to merge calls
-                firstCall.conference(secondCall)
-
-                Log.d("CallScreenActivity", "Conference request sent")
-            } else {
-                Log.d("CallScreenActivity", "Not enough calls to merge: ${calls.size}")
+            
+            // Find the active and holding calls
+            val activeCall = calls.firstOrNull { it.state == Call.STATE_ACTIVE }
+            val holdingCall = calls.firstOrNull { it.state == Call.STATE_HOLDING }
+            
+            if (activeCall == null || holdingCall == null) {
+                Log.e("CallScreenActivity", "Could not find active and holding calls")
+                return
             }
+            
+            Log.d(
+                "CallScreenActivity",
+                "Attempting to conference active call with holding call"
+            )
+            
+            // Conference the active call with the holding call
+            activeCall.conference(holdingCall)
+            
+            Log.d("CallScreenActivity", "Merge/conference request sent")
         } catch (e: Exception) {
             Log.e("CallScreenActivity", "Failed to perform merge", e)
         }
     }
+
+    private fun onSwapCalls() {
+        Log.d("CallScreenActivity", "Swap calls requested")
+        
+        if (!canSwapCalls()) {
+            Log.d("CallScreenActivity", "Swap conditions not met")
+            return
+        }
+        
+        try {
+            val calls = DefaultInCallService.getAllCalls()
+            
+            // Find active and holding calls
+            val activeCall = calls.firstOrNull { it.state == Call.STATE_ACTIVE }
+            val holdingCall = calls.firstOrNull { it.state == Call.STATE_HOLDING }
+            
+            Log.d(
+                "CallScreenActivity",
+                "Swapping - Active: ${activeCall != null}, Holding: ${holdingCall != null}"
+            )
+            
+            // Hold the active call (if exists)
+            activeCall?.hold()
+            
+            // Unhold the holding call (if exists)
+            holdingCall?.unhold()
+            
+            Log.d("CallScreenActivity", "Swap request sent")
+        } catch (e: Exception) {
+            Log.e("CallScreenActivity", "Failed to swap calls", e)
+        }
+    }
+
 
     private fun onAddCall() {
         Log.d("CallScreenActivity", "Add call action requested")
@@ -966,9 +1088,11 @@ fun CallScreen(
         onToggleHold: () -> Unit = {},
         canConference: Boolean = false,
         canMerge: Boolean = false,
+        canSwap: Boolean = false,
         callCount: Int = 1,
         onConference: () -> Unit = {},
         onMerge: () -> Unit = {},
+        onSwapCalls: () -> Unit = {},
         onAddCall: () -> Unit = {},
         onSendDtmf: (Char) -> Unit = {},
         showKeypad: Boolean,
@@ -1299,6 +1423,38 @@ fun CallScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+
+                        // Swap button (shown when swap is available)
+                        if (canSwap) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                IconButton(
+                                        onClick = onSwapCalls,
+                                        modifier =
+                                                Modifier.size(64.dp)
+                                                        .background(
+                                                                color =
+                                                                        MaterialTheme
+                                                                                .colorScheme
+                                                                                .surfaceVariant,
+                                                                shape = CircleShape
+                                                        )
+                                ) {
+                                    Icon(
+                                            imageVector = Icons.Default.Phone,
+                                            contentDescription = "Swap",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                        text = "Swap",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
 
                         // Conference or Add Call button based on call count
                         if (isActive) {
