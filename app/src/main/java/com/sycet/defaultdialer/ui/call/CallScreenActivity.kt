@@ -71,7 +71,32 @@ import com.sycet.defaultdialer.services.DefaultInCallService
 import com.sycet.defaultdialer.ui.theme.DefaultDialerTheme
 import java.util.Locale
 import kotlinx.coroutines.delay
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.width
+import androidx.compose.animation.with
+import androidx.compose.animation.ExperimentalAnimationApi
 
+@OptIn(ExperimentalAnimationApi::class)
 class CallScreenActivity : ComponentActivity() {
 
     private var currentCall: Call? = null
@@ -1026,159 +1051,32 @@ private fun formatDuration(seconds: Long): String {
     }
 }
 
-@Composable
-fun Keypad(onSendDtmf: (Char) -> Unit, onClose: () -> Unit) {
-    // State to track pressed digits
-    var pressedDigits by remember { mutableStateOf("") }
-    
-    val keypadButtons =
-            listOf(
-                    listOf("1", "2", "3"),
-                    listOf("4", "5", "6"),
-                    listOf("7", "8", "9"),
-                    listOf("*", "0", "#")
-            )
-
-    // Floating card overlay
-    androidx.compose.material3.Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        elevation = androidx.compose.material3.CardDefaults.cardElevation(
-            defaultElevation = 8.dp
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Header with close button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Keypad",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                IconButton(onClick = onClose) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Close Keypad",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Display showing pressed digits
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = MaterialTheme.shapes.medium
-                    )
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (pressedDigits.isEmpty()) "Enter digits..." else pressedDigits,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = if (pressedDigits.isEmpty())
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        else
-                            MaterialTheme.colorScheme.onSurface
-                    )
-                    // Clear button
-                    if (pressedDigits.isNotEmpty()) {
-                        IconButton(
-                            onClick = { pressedDigits = "" },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Keypad buttons
-            keypadButtons.forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    row.forEach { digit ->
-                        FloatingActionButton(
-                            onClick = {
-                                pressedDigits += digit
-                                onSendDtmf(digit[0])
-                            },
-                            modifier = Modifier.size(64.dp),
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                text = digit,
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-        }
-    }
-}
-
-
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun CallScreen(
-        phoneNumber: String,
-        initialCallState: String,
-        call: Call?,
-        onAnswerCall: () -> Unit,
-        onRejectCall: () -> Unit,
-        onEndCall: () -> Unit,
-        onToggleMute: () -> Unit,
-        onSetAudioRoute: (Int) -> Unit,
-        audioState: CallAudioState?,
-        isOnHold: Boolean = false,
-        onToggleHold: () -> Unit = {},
-        canConference: Boolean = false,
-        canMerge: Boolean = false,
-        canSwap: Boolean = false,
-        callCount: Int = 1,
-        onConference: () -> Unit = {},
-        onMerge: () -> Unit = {},
-        onSwapCalls: () -> Unit = {},
-        onAddCall: () -> Unit = {},
-        onSendDtmf: (Char) -> Unit = {},
-        showKeypad: Boolean,
-        onToggleKeypad: () -> Unit,
-        getContactName: (String) -> String?
+    phoneNumber: String,
+    initialCallState: String,
+    call: Call?,
+    onAnswerCall: () -> Unit,
+    onRejectCall: () -> Unit,
+    onEndCall: () -> Unit,
+    onToggleMute: () -> Unit,
+    onSetAudioRoute: (Int) -> Unit,
+    audioState: CallAudioState?,
+    isOnHold: Boolean = false,
+    onToggleHold: () -> Unit = {},
+    canConference: Boolean = false,
+    canMerge: Boolean = false,
+    canSwap: Boolean = false,
+    callCount: Int = 1,
+    onConference: () -> Unit = {},
+    onMerge: () -> Unit = {},
+    onSwapCalls: () -> Unit = {},
+    onAddCall: () -> Unit = {},
+    onSendDtmf: (Char) -> Unit = {},
+    showKeypad: Boolean,
+    onToggleKeypad: () -> Unit,
+    getContactName: (String) -> String?
 ) {
     var callState by remember { mutableStateOf(initialCallState) }
     var elapsedTime by remember { mutableLongStateOf(0L) }
@@ -1197,56 +1095,39 @@ fun CallScreen(
     
     var isRinging by remember {
         mutableStateOf(
-                initialCallState.contains("Incoming", ignoreCase = true) ||
-                        initialCallState.contains("Ringing", ignoreCase = true)
+            initialCallState.contains("Incoming", ignoreCase = true) ||
+            initialCallState.contains("Ringing", ignoreCase = true)
         )
     }
 
-    // Prefer the number from the active Call's handle if available, otherwise use the passed
-    // phoneNumber
-    val resolvedNumber =
-            call?.details?.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: phoneNumber
-
-    // Fetch contact name for the resolved number (if permission is granted). Recompute when number
-    // changes.
+    // Resolved number and contact name
+    val resolvedNumber = call?.details?.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() } ?: phoneNumber
     val contactName = remember(resolvedNumber) { getContactName(resolvedNumber) }
+    val displayName = if (!contactName.isNullOrBlank() && resolvedNumber != "Unknown") contactName else resolvedNumber
 
-    // Display name: show contact name if available; otherwise show the resolved number
-    val displayName =
-            if (!contactName.isNullOrBlank() && resolvedNumber != "Unknown") contactName
-            else resolvedNumber
-
-    // Monitor call state from the Call object
+    // Monitor call state
     DisposableEffect(call) {
-        val callback =
-                object : Call.Callback() {
-                    override fun onStateChanged(call: Call?, state: Int) {
-                        when (state) {
-                            Call.STATE_ACTIVE -> {
-                                callState = "Active"
-                                isActive = true
-                                isRinging = false
-                            }
-                            Call.STATE_DISCONNECTED -> {
-                                val disconnectCause = call?.details?.disconnectCause
-                                Log.d(
-                                        "CallScreen",
-                                        "Disconnected: ${disconnectCause?.reason}, Code: ${disconnectCause?.code}"
-                                )
-
-                                // Close screen for missed calls or any disconnect
-                                onEndCall()
-                            }
-                            Call.STATE_RINGING -> {
-                                isRinging = true
-                                isActive = false
-                            }
-                        }
+        val callback = object : Call.Callback() {
+            override fun onStateChanged(call: Call?, state: Int) {
+                when (state) {
+                    Call.STATE_ACTIVE -> {
+                        callState = "Active"
+                        isActive = true
+                        isRinging = false
+                    }
+                    Call.STATE_DISCONNECTED -> {
+                        val disconnectCause = call?.details?.disconnectCause
+                        Log.d("CallScreen", "Disconnected: ${disconnectCause?.reason}")
+                        onEndCall()
+                    }
+                    Call.STATE_RINGING -> {
+                        isRinging = true
+                        isActive = false
                     }
                 }
-
+            }
+        }
         call?.registerCallback(callback)
-
         onDispose { call?.unregisterCallback(callback) }
     }
 
@@ -1258,480 +1139,649 @@ fun CallScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+    // Modern color scheme
+    val backgroundColor = Color(0xFF0A0F1C) // Dark blue background
+    val surfaceColor = Color(0xFF1A2138) // Card/button background
+    val primaryColor = Color(0xFF4A6FFF) // Blue accent
+    val successColor = Color(0xFF2ECC71) // Green
+    val dangerColor = Color(0xFFFF4757) // Red
+    
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0A0F1C),
+                        Color(0xFF141B2D)
+                    )
+                )
+            )
+    ) {
         Column(
-                modifier = Modifier.fillMaxSize().padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             // Top section - Contact info
             Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(top = 64.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(top = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Contact avatar with initial letter
+                // Animated avatar circle
                 Box(
-                        modifier =
-                                Modifier.size(120.dp)
-                                        .background(
-                                                color = MaterialTheme.colorScheme.primaryContainer,
-                                                shape = CircleShape
-                                        ),
-                        contentAlignment = Alignment.Center
+                    modifier = Modifier
+                        .size(140.dp)
+                        .background(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    primaryColor.copy(alpha = 0.3f),
+                                    primaryColor.copy(alpha = 0.1f)
+                                )
+                            ),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    // Show initial letter of contact name or "?" if unknown
-                    val initial = displayName.firstOrNull()?.uppercase() ?: "?"
-                    if (initial != "?") {
-                        Text(
+                    Box(
+                        modifier = Modifier
+                            .size(110.dp)
+                            .background(
+                                color = primaryColor,
+                                shape = CircleShape
+                            )
+                            .border(
+                                width = 4.dp,
+                                color = primaryColor.copy(alpha = 0.3f),
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (contactName != null && contactName.isNotBlank()) {
+                            val initial = contactName.first().uppercase()
+                            Text(
                                 text = initial,
                                 style = MaterialTheme.typography.displayLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    } else {
-                        Icon(
+                                color = Color.White
+                            )
+                        } else {
+                            Icon(
                                 imageVector = Icons.Default.Person,
                                 contentDescription = "Contact",
-                                modifier = Modifier.size(64.dp),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
+                                modifier = Modifier.size(48.dp),
+                                tint = Color.White
+                            )
+                        }
                     }
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Contact name with animation
+                AnimatedContent(
+                    targetState = displayName,
+                    transitionSpec = {
+                        fadeIn() with fadeOut() using SizeTransform(false)
+                    }
+                ) { name ->
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                }
+
+                // Phone number
+                if (resolvedNumber != displayName && resolvedNumber != "Unknown") {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = resolvedNumber,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF8F9BB3),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Call state chip
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = when {
+                                isRinging -> successColor.copy(alpha = 0.2f)
+                                isActive -> primaryColor.copy(alpha = 0.2f)
+                                else -> Color(0xFF8F9BB3).copy(alpha = 0.2f)
+                            },
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = callState,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = when {
+                            isRinging -> successColor
+                            isActive -> primaryColor
+                            else -> Color(0xFF8F9BB3)
+                        }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Contact name - Material 3 Headline style
-                Text(
-                        text = displayName,
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                )
-
-                // Phone number - Body style
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                        text = resolvedNumber,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Call state - Accent color with label style
-                Text(
-                        text = callState,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.secondary  // Accent color
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Call duration - Title style
+                // Call duration with pulse animation
                 if (isActive) {
-                    Text(
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    color = successColor,
+                                    shape = CircleShape
+                                )
+                                .animatePulse()
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
                             text = formatDuration(elapsedTime),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-
-            // Bottom section - Call controls
-            Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(bottom = 32.dp)
-            ) {
-                // Show answer/reject buttons for incoming calls
-                if (isRinging) {
-                    Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Reject button
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            FloatingActionButton(
-                                    onClick = onRejectCall,
-                                    modifier = Modifier.size(72.dp),
-                                    containerColor = Color(0xFFE53935)
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.CallEnd,
-                                        contentDescription = "Reject",
-                                        modifier = Modifier.size(32.dp),
-                                        tint = Color.White
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                    text = "Reject",
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // Answer button
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            FloatingActionButton(
-                                    onClick = onAnswerCall,
-                                    modifier = Modifier.size(72.dp),
-                                    containerColor = Color(0xFF4CAF50)
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.Call,
-                                        contentDescription = "Answer",
-                                        modifier = Modifier.size(32.dp),
-                                        tint = Color.White
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                    text = "Answer",
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
-                    // Control buttons for active call
-                    Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Mute button
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            IconButton(
-                                    onClick = {
-                                        isMuted = !isMuted
-                                        onToggleMute()
-                                    },
-                                    modifier =
-                                            Modifier.size(64.dp)
-                                                    .background(
-                                                            color =
-                                                                    if (isMuted)
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .primary
-                                                                    else
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .surfaceVariant,
-                                                            shape = CircleShape
-                                                    )
-                            ) {
-                                Icon(
-                                        imageVector =
-                                                if (isMuted) Icons.Default.MicOff
-                                                else Icons.Default.Mic,
-                                        contentDescription = "Mute",
-                                        tint =
-                                                if (isMuted) Color.White
-                                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(28.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                    text = if (isMuted) "Unmute" else "Mute",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // Hold button
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            IconButton(
-                                    onClick = onToggleHold,
-                                    modifier =
-                                            Modifier.size(64.dp)
-                                                    .background(
-                                                            color =
-                                                                    if (isOnHold)
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .primary
-                                                                    else
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .surfaceVariant,
-                                                            shape = CircleShape
-                                                    )
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.Pause,
-                                        contentDescription = "Hold",
-                                        tint =
-                                                if (isOnHold) Color.White
-                                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(28.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                    text = if (isOnHold) "Resume" else "Hold",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // Keypad button
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            IconButton(
-                                    onClick = onToggleKeypad,
-                                    modifier =
-                                            Modifier.size(64.dp)
-                                                    .background(
-                                                            color =
-                                                                    if (showKeypad)
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .primary
-                                                                    else
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .surfaceVariant,
-                                                            shape = CircleShape
-                                                    )
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Filled.Dialpad,
-                                        contentDescription = "Keypad",
-                                        tint =
-                                                if (showKeypad) Color.White
-                                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(28.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                    text = "Keypad",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // Swap button (shown when swap is available)
-                        if (canSwap) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                IconButton(
-                                        onClick = onSwapCalls,
-                                        modifier =
-                                                Modifier.size(64.dp)
-                                                        .background(
-                                                                color =
-                                                                        MaterialTheme
-                                                                                .colorScheme
-                                                                                .surfaceVariant,
-                                                                shape = CircleShape
-                                                        )
-                                ) {
-                                    Icon(
-                                            imageVector = Icons.Default.Phone,
-                                            contentDescription = "Swap",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                        text = "Swap",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-
-                        // Conference or Add Call button based on call count
-                        if (isActive) {
-                            if (callCount >= 2 && canMerge) {
-                                // Show Merge button when 2+ calls active
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    IconButton(
-                                            onClick = { onMerge() },
-                                            modifier =
-                                                    Modifier.size(64.dp)
-                                                            .background(
-                                                                    color =
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .surfaceVariant,
-                                                                    shape = CircleShape
-                                                            )
-                                    ) {
-                                        Icon(
-                                                imageVector = Icons.Default.Call,
-                                                contentDescription = "Merge",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(28.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                            text = "Merge",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            } else {
-                                // Show Add Call button when single call active
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    IconButton(
-                                            onClick = { onAddCall() },
-                                            modifier =
-                                                    Modifier.size(64.dp)
-                                                            .background(
-                                                                    color =
-                                                                            MaterialTheme
-                                                                                    .colorScheme
-                                                                                    .surfaceVariant,
-                                                                    shape = CircleShape
-                                                            )
-                                    ) {
-                                        Icon(
-                                                imageVector = Icons.Default.Person,
-                                                contentDescription = "Add Call",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(28.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                            text = "Add Call",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-
-                        // Audio Route button (Speaker/Bluetooth)
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box {
-                                IconButton(
-                                        onClick = {
-                                            // If multiple routes available (e.g. BT connected), show menu
-                                            // Otherwise just toggle speaker
-                                            val hasBluetooth = (supportedRoutes and CallAudioState.ROUTE_BLUETOOTH) != 0
-                                            if (hasBluetooth) {
-                                                showAudioRouteMenu = true
-                                            } else {
-                                                // Simple toggle between Speaker and Earpiece/Wired
-                                                val newRoute = if (isSpeakerOn) CallAudioState.ROUTE_WIRED_OR_EARPIECE else CallAudioState.ROUTE_SPEAKER
-                                                onSetAudioRoute(newRoute)
-                                            }
-                                        },
-                                        modifier =
-                                                Modifier.size(64.dp)
-                                                        .background(
-                                                                color =
-                                                                        if (isSpeakerOn || isBluetoothOn)
-                                                                                MaterialTheme
-                                                                                        .colorScheme
-                                                                                        .primary
-                                                                        else
-                                                                                MaterialTheme
-                                                                                        .colorScheme
-                                                                                        .surfaceVariant,
-                                                                shape = CircleShape
-                                                        )
-                                ) {
-                                    Icon(
-                                            imageVector = if (isBluetoothOn) Icons.Filled.BluetoothAudio else Icons.Default.VolumeUp,
-                                            contentDescription = "Audio Route",
-                                            tint =
-                                                    if (isSpeakerOn || isBluetoothOn) Color.White
-                                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                                
-                                DropdownMenu(
-                                    expanded = showAudioRouteMenu,
-                                    onDismissRequest = { showAudioRouteMenu = false }
-                                ) {
-                                    if ((supportedRoutes and CallAudioState.ROUTE_BLUETOOTH) != 0) {
-                                        DropdownMenuItem(
-                                            text = { Text("Bluetooth") },
-                                            onClick = {
-                                                onSetAudioRoute(CallAudioState.ROUTE_BLUETOOTH)
-                                                showAudioRouteMenu = false
-                                            },
-                                            leadingIcon = {
-                                                Icon(Icons.Filled.BluetoothAudio, contentDescription = null)
-                                            }
-                                        )
-                                    }
-                                    if ((supportedRoutes and CallAudioState.ROUTE_SPEAKER) != 0) {
-                                        DropdownMenuItem(
-                                            text = { Text("Speaker") },
-                                            onClick = {
-                                                onSetAudioRoute(CallAudioState.ROUTE_SPEAKER)
-                                                showAudioRouteMenu = false
-                                            },
-                                            leadingIcon = {
-                                                Icon(Icons.Default.VolumeUp, contentDescription = null)
-                                            }
-                                        )
-                                    }
-                                    if ((supportedRoutes and CallAudioState.ROUTE_EARPIECE) != 0 || (supportedRoutes and CallAudioState.ROUTE_WIRED_HEADSET) != 0) {
-                                        DropdownMenuItem(
-                                            text = { Text("Phone") },
-                                            onClick = {
-                                                onSetAudioRoute(CallAudioState.ROUTE_WIRED_OR_EARPIECE)
-                                                showAudioRouteMenu = false
-                                            },
-                                            leadingIcon = {
-                                                Icon(Icons.Filled.Phone, contentDescription = null)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                    text = if (isBluetoothOn) "Bluetooth" else if (isSpeakerOn) "Speaker" else "Audio",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(48.dp))
-
-                    // End call button
-                    FloatingActionButton(
-                            onClick = onEndCall,
-                            modifier = Modifier.size(72.dp),
-                            containerColor = Color(0xFFE53935)
-                    ) {
-                        Icon(
-                                imageVector = Icons.Default.CallEnd,
-                                contentDescription = "End Call",
-                                modifier = Modifier.size(32.dp),
-                                tint = Color.White
+                            color = successColor
                         )
                     }
                 }
             }
+
+            // Bottom section - Call controls
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        color = surfaceColor,
+                        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+                    )
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Show answer/reject for incoming calls
+                if (isRinging) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Reject button
+                        ModernCallButton(
+                            onClick = onRejectCall,
+                            icon = Icons.Default.CallEnd,
+                            iconColor = Color.White,
+                            backgroundColor = dangerColor,
+                            size = 72.dp,
+                            label = "Decline",
+                            iconSize = 32.dp
+                        )
+
+                        // Answer button
+                        ModernCallButton(
+                            onClick = onAnswerCall,
+                            icon = Icons.Default.Call,
+                            iconColor = Color.White,
+                            backgroundColor = successColor,
+                            size = 72.dp,
+                            label = "Answer",
+                            iconSize = 32.dp
+                        )
+                    }
+                } else {
+                    // Primary call control buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Mute button
+                        ModernCallButton(
+                            onClick = {
+                                isMuted = !isMuted
+                                onToggleMute()
+                            },
+                            icon = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                            iconColor = if (isMuted) Color.White else Color(0xFF8F9BB3),
+                            backgroundColor = if (isMuted) dangerColor else surfaceColor.copy(alpha = 0.5f),
+                            size = 56.dp,
+                            label = if (isMuted) "Muted" else "Mute",
+                            iconSize = 24.dp
+                        )
+
+                        // Keypad button
+                        ModernCallButton(
+                            onClick = onToggleKeypad,
+                            icon = Icons.Default.Dialpad,
+                            iconColor = if (showKeypad) primaryColor else Color(0xFF8F9BB3),
+                            backgroundColor = if (showKeypad) primaryColor.copy(alpha = 0.2f) else surfaceColor.copy(alpha = 0.5f),
+                            size = 56.dp,
+                            label = "Keypad",
+                            iconSize = 24.dp
+                        )
+
+                        // Audio route button
+                        Box {
+                            ModernCallButton(
+                                onClick = {
+                                    val hasBluetooth = (supportedRoutes and CallAudioState.ROUTE_BLUETOOTH) != 0
+                                    if (hasBluetooth) {
+                                        showAudioRouteMenu = true
+                                    } else {
+                                        val newRoute = if (isSpeakerOn) CallAudioState.ROUTE_WIRED_OR_EARPIECE else CallAudioState.ROUTE_SPEAKER
+                                        onSetAudioRoute(newRoute)
+                                    }
+                                },
+                                icon = if (isBluetoothOn) Icons.Default.BluetoothAudio else Icons.Default.VolumeUp,
+                                iconColor = when {
+                                    isBluetoothOn -> Color.White
+                                    isSpeakerOn -> primaryColor
+                                    else -> Color(0xFF8F9BB3)
+                                },
+                                backgroundColor = when {
+                                    isBluetoothOn || isSpeakerOn -> primaryColor.copy(alpha = 0.2f)
+                                    else -> surfaceColor.copy(alpha = 0.5f)
+                                },
+                                size = 56.dp,
+                                label = when {
+                                    isBluetoothOn -> "BT"
+                                    isSpeakerOn -> "Speaker"
+                                    else -> "Audio"
+                                },
+                                iconSize = 24.dp
+                            )
+
+                            DropdownMenu(
+                                expanded = showAudioRouteMenu,
+                                onDismissRequest = { showAudioRouteMenu = false },
+                                modifier = Modifier.background(surfaceColor)
+                            ) {
+                                if ((supportedRoutes and CallAudioState.ROUTE_BLUETOOTH) != 0) {
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Text("Bluetooth", color = Color.White) 
+                                        },
+                                        onClick = {
+                                            onSetAudioRoute(CallAudioState.ROUTE_BLUETOOTH)
+                                            showAudioRouteMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.BluetoothAudio, 
+                                                contentDescription = null,
+                                                tint = primaryColor
+                                            )
+                                        },
+                                        modifier = Modifier.background(surfaceColor)
+                                    )
+                                }
+                                if ((supportedRoutes and CallAudioState.ROUTE_SPEAKER) != 0) {
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Text("Speaker", color = Color.White) 
+                                        },
+                                        onClick = {
+                                            onSetAudioRoute(CallAudioState.ROUTE_SPEAKER)
+                                            showAudioRouteMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.VolumeUp, 
+                                                contentDescription = null,
+                                                tint = primaryColor
+                                            )
+                                        },
+                                        modifier = Modifier.background(surfaceColor)
+                                    )
+                                }
+                                if ((supportedRoutes and CallAudioState.ROUTE_EARPIECE) != 0 || 
+                                    (supportedRoutes and CallAudioState.ROUTE_WIRED_HEADSET) != 0) {
+                                    DropdownMenuItem(
+                                        text = { 
+                                            Text("Phone", color = Color.White) 
+                                        },
+                                        onClick = {
+                                            onSetAudioRoute(CallAudioState.ROUTE_WIRED_OR_EARPIECE)
+                                            showAudioRouteMenu = false
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Phone, 
+                                                contentDescription = null,
+                                                tint = primaryColor
+                                            )
+                                        },
+                                        modifier = Modifier.background(surfaceColor)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Secondary action buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Hold button
+                        ModernCallButton(
+                            onClick = onToggleHold,
+                            icon = Icons.Default.Pause,
+                            iconColor = if (isOnHold) Color.White else Color(0xFF8F9BB3),
+                            backgroundColor = if (isOnHold) primaryColor.copy(alpha = 0.5f) else Color.Transparent,
+                            size = 40.dp,
+                            label = if (isOnHold) "Resume" else "Hold",
+                            iconSize = 20.dp,
+                            showBackground = isOnHold
+                        )
+
+                        // Add Call button
+                        ModernCallButton(
+                            onClick = onAddCall,
+                            icon = Icons.Default.Person,
+                            iconColor = Color(0xFF8F9BB3),
+                            backgroundColor = Color.Transparent,
+                            size = 40.dp,
+                            label = "Add Call",
+                            iconSize = 20.dp,
+                            showBackground = false
+                        )
+
+                        // Merge button (when available)
+                        if (callCount >= 2 && canMerge) {
+                            ModernCallButton(
+                                onClick = onMerge,
+                                icon = Icons.Default.Call,
+                                iconColor = Color(0xFF8F9BB3),
+                                backgroundColor = Color.Transparent,
+                                size = 40.dp,
+                                label = "Merge",
+                                iconSize = 20.dp,
+                                showBackground = false
+                            )
+                        }
+
+                        // Swap button (when available)
+                        if (canSwap) {
+                            ModernCallButton(
+                                onClick = onSwapCalls,
+                                icon = Icons.Default.SwapVert,
+                                iconColor = Color(0xFF8F9BB3),
+                                backgroundColor = Color.Transparent,
+                                size = 40.dp,
+                                label = "Swap",
+                                iconSize = 20.dp,
+                                showBackground = false
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    // End call button with glow effect
+                    Box(
+                        modifier = Modifier
+                            .shadow(
+                                elevation = 16.dp,
+                                shape = CircleShape,
+                                ambientColor = dangerColor,
+                                spotColor = dangerColor.copy(alpha = 0.5f)
+                            )
+                    ) {
+                        FloatingActionButton(
+                            onClick = onEndCall,
+                            modifier = Modifier.size(80.dp),
+                            containerColor = dangerColor,
+                            shape = CircleShape
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CallEnd,
+                                contentDescription = "End Call",
+                                modifier = Modifier.size(36.dp),
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+            }
         }
-        
-        // Floating keypad overlay
+
+        // Modern keypad overlay
         if (showKeypad) {
+            ModernKeypad(
+                onSendDtmf = onSendDtmf,
+                onClose = onToggleKeypad,
+                backgroundColor = surfaceColor
+            )
+        }
+    }
+}
+
+@Composable
+fun ModernCallButton(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    iconColor: Color,
+    backgroundColor: Color,
+    size: Dp,
+    label: String,
+    iconSize: Dp,
+    showBackground: Boolean = true
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .size(size)
+                .then(
+                    if (showBackground) {
+                        Modifier.background(
+                            color = backgroundColor,
+                            shape = CircleShape
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                modifier = Modifier.size(iconSize),
+                tint = iconColor
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF8F9BB3)
+        )
+    }
+}
+
+@Composable
+fun ModernKeypad(
+    onSendDtmf: (Char) -> Unit,
+    onClose: () -> Unit,
+    backgroundColor: Color
+) {
+    var pressedDigits by remember { mutableStateOf("") }
+    val keypadButtons = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("*", "0", "#")
+    )
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.8f))
+            .padding(16.dp),
+        color = Color.Transparent,
+        contentColor = Color.White
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Keypad",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Digits display
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f)), // Semi-transparent background
+                    .fillMaxWidth()
+                    .height(80.dp)
+                    .background(
+                        color = backgroundColor,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                    .padding(horizontal = 24.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Keypad(onSendDtmf = onSendDtmf, onClose = onToggleKeypad)
+                Text(
+                    text = if (pressedDigits.isEmpty()) "Enter digits..." else pressedDigits,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Keypad grid
+            keypadButtons.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    row.forEach { digit ->
+                        KeypadButton(
+                            digit = digit,
+                            onClick = {
+                                pressedDigits += digit
+                                onSendDtmf(digit[0])
+                            },
+                            modifier = Modifier.size(80.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Clear button
+            if (pressedDigits.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                TextButton(
+                    onClick = { pressedDigits = "" },
+                    modifier = Modifier.padding(8.dp)
+                ) {
+                    Text(
+                        text = "Clear",
+                        color = Color(0xFF8F9BB3),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         }
     }
 }
+
+@Composable
+fun KeypadButton(
+    digit: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .background(
+                color = Color(0xFF2A3152),
+                shape = CircleShape
+            )
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = digit,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            if (digit == "1") {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF8F9BB3)
+                )
+            }
+        }
+    }
+}
+
+// Animation modifier for pulse effect
+fun Modifier.animatePulse(): Modifier = composed {
+    val infiniteTransition = rememberInfiniteTransition()
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+    this.alpha(alpha)
+}
+
