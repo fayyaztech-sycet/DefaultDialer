@@ -21,4 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "Default Dialer"
 include(":app")
- 
+include(":dialer-core")
+
+project(":dialer-core").projectDir = File("../dialer-core-repo/dialer-core")

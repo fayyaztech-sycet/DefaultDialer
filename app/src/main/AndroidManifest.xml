@@ -2,43 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.CALL_PHONE" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
-    <uses-permission android:name="android.permission.READ_PRECISE_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
-    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- Some OEMs require PROCESS_OUTGOING_CALLS to be declared (even though deprecated)
-        alongside WRITE_CALL_LOG to avoid write-call-log failures on older devices.
-        If you don't support outgoing call blocking, keep this to improve compatibility. -->
-    <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS"
-        tools:ignore="Deprecated" />
-    <!-- Removed SYSTEM_ALERT_WINDOW because Play Store rejects dialers using overlays during calls.
-        Prefer a full-screen in-call UI or other safe UX patterns instead. -->
-    <!-- Android 13+ (API 33) notifications runtime permission — add to manifest so it can be
-    requested at runtime -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"
-        tools:ignore="FullScreenIntentPolicy" />
-
-    <!-- This app implements dialer functionality. For development and emulator
-            testing we intentionally allow installs on devices without telephony
-            hardware by keeping this feature optional. In production you may set
-            android:required="true" if your app absolutely requires telephony. -->
-    <uses-feature android:name="android.hardware.telephony" android:required="false" />
-    <!-- Fallback features to improve compatibility with devices that advertise specific
-            telephony sub-features (some tablets/legacy devices). Keep required=false to allow
-            installs on devices that don't have these specific sub-features. -->
-    <uses-feature android:name="android.hardware.telephony.gsm" android:required="false" />
-    <uses-feature android:name="android.hardware.telephony.cdma" android:required="false" />
+    <!-- Note: Core telephony permissions are now declared in dialer-core module -->
+    <!-- Only app-specific permissions should be added here if needed -->
 
     <application
         android:allowBackup="true"
@@ -84,97 +49,9 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name="com.sycet.defaultdialer.ui.call.CallScreenActivity"
-            tools:targetApi="31"
-            android:excludeFromRecents="true"
-            android:launchMode="singleTop"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:showForAllUsers="true"
-            android:theme="@style/Theme.DefaultDialer"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <!-- DEFAULT category is required on some OEMs to launch this activity from call UI -->
-                <category android:name="android.intent.category.DEFAULT" />
-                <!-- Accept tel: scheme too to improve compatibility as the in-call UI
-                     entry point on some OEMs. This won't affect the MainActivity which
-                     already handles tel: ACTION_DIAL/CALL, but helps ensure the platform
-                     can resolve an in-call UI activity where required. -->
-                <data android:scheme="tel" />
-            </intent-filter>
-        </activity>
-
-        <!-- If `CallStateObserverService` ever runs as a foreground service, advertise phoneCall
-               type (Android 10+) so the system treats it as a call-related foreground service
-               and avoids killing it during call transitions. -->
-        <service
-            android:name=".services.CallStateObserverService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="phoneCall" />
-
-
-        <service
-            android:name=".services.DefaultInCallService"
-            tools:targetApi="31"
-            android:permission="android.permission.BIND_INCALL_SERVICE"
-            android:exported="true"
-            android:foregroundServiceType="phoneCall">
-            <!-- Advertise whether the in-call service will play ringtone for incoming calls. -->
-            <meta-data
-                android:name="android.telecom.IN_CALL_SERVICE_RINGING"
-                android:value="true" />
-            <!-- Advertise basic in-call UI capability (Android 12+) -->
-            <meta-data
-                android:name="android.telecom.IN_CALL_SERVICE_UI"
-                android:value="true" />
-            <!-- Explicitly declare call streaming support for capability detection.
-                 Set to false unless the app supports call streaming via the Telecom APIs. -->
-            <meta-data
-                android:name="android.telecom.IN_CALL_SERVICE_SUPPORTS_CALL_STREAMING"
-                android:value="false" />
-            <!-- Advertise whether the in-call service supports video calling (Android 12-14) -->
-            <meta-data
-                android:name="android.telecom.IN_CALL_SERVICE_SUPPORTS_VIDEO_CALLING"
-                android:value="false" />
-            <!-- Indicate the service can handle ringing state notifications (improves capability
-            detection) -->
-            <intent-filter>
-                <action android:name="android.telecom.InCallService" />
-            </intent-filter>
-        </service>
-
-        <!-- A dedicated CallScreeningService (android.telecom.CallScreeningService) -->
-        <service
-            android:name=".services.CallScreeningService"
-            tools:targetApi="31"
-            android:permission="android.permission.BIND_SCREENING_SERVICE"
-            android:exported="true"
-            tools:ignore="ExportedService">
-            <intent-filter>
-                <action android:name="android.telecom.CallScreeningService" />
-            </intent-filter>
-        </service>
-
-        <receiver
-            android:name=".services.IncomingCallReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <!-- Lowered priority to avoid conflicting with OEM dealers. PHONE_STATE broadcast
-                 is unreliable on Android 12+ and it's recommended to move receiver logic into
-                 DefaultInCallService.onCallAdded() instead of relying on the broadcast. -->
-            <intent-filter android:priority="100">
-                <action android:name="android.intent.action.PHONE_STATE" />
-            </intent-filter>
-        </receiver>
-
-        <receiver
-            android:name=".services.CallActionReceiver"
-            android:enabled="true"
-            android:exported="false">
-        </receiver>
+        <!-- Note: CallScreenActivity and all call-related services are now
+             declared in the dialer-core module's manifest and will be
+             automatically merged during the build process. -->
     </application>
 
 </manifest>
